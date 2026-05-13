@@ -148,20 +148,32 @@ async def get_flood_predictions(location_id: str):
     client = get_supabase()
     uuid = resolve_location_uuid(location_id)
 
-    from datetime import datetime
-    now = datetime.utcnow().isoformat()
+    from datetime import datetime, timedelta
+    now = datetime.utcnow()
+    past_limit = (now - timedelta(days=7)).isoformat()
+    future_limit = (now + timedelta(days=30)).isoformat()
 
     result = (
         client.table("flood_predictions")
         .select("*")
         .eq("location_id", uuid)
-        .gte("target_date", now)
+        .gte("target_date", past_limit)
+        .lte("target_date", future_limit)
         .order("target_date", desc=False)
-        .limit(30)
+        .order("predicted_at", desc=True)
+        .limit(200)
         .execute()
     )
 
-    return {"data": result.data, "count": len(result.data)}
+    # Deduplicate: one entry per day (keep latest predicted_at)
+    by_day: dict = {}
+    for row in result.data:
+        day = str(row["target_date"])[:10]
+        if day not in by_day:
+            by_day[day] = row
+
+    deduped = sorted(by_day.values(), key=lambda r: r["target_date"])
+    return {"data": deduped, "count": len(deduped)}
 
 
 @router.get("/risk-map")
