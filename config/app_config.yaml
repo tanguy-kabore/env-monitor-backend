@@ -1,0 +1,861 @@
+app:
+  name: "EcoWatch Burkina"
+  version: "1.0.0"
+  version_type: "alpha"        # alpha | beta | rc | stable
+  release_date: "2026-05-13"
+  build_number: "20260513-001"
+  description: "Système National de Surveillance Environnementale du Burkina Faso"
+  logo: "/assets/logo.png"
+  favicon: "/assets/favicon.ico"
+  default_language: "fr"
+  supported_languages: ["fr", "en"]
+  changelog:
+    - version: "1.0.0-alpha"
+      date: "2026-05-13"
+      notes: "Première version alpha — tableau de bord, météo, inondations, qualité air, sécheresse, climat, alertes, rapport, export"
+  theme:
+    primary_color: "#0E7C3A"
+    secondary_color: "#1B6FA8"
+    accent_color: "#E8A838"
+    danger_color: "#D63031"
+    warning_color: "#FDCB6E"
+    success_color: "#00B894"
+    background_color: "#F8FAFB"
+    sidebar_color: "#0C2340"
+
+country:
+  name: "Burkina Faso"
+  code: "BF"
+  iso_alpha3: "BFA"
+  timezone: "Africa/Ouagadougou"
+  currency: "XOF"
+  bounding_box:
+    north: 15.1
+    south: 9.4
+    east: 2.5
+    west: -5.6
+  center:
+    latitude: 12.3714
+    longitude: -1.5197
+  default_zoom: 7
+
+regions:
+  - id: "boucle_du_mouhoun"
+    name: "Boucle du Mouhoun"
+    capital: "Dédougou"
+    latitude: 12.4631
+    longitude: -3.4606
+    provinces:
+      - id: "bale"
+        name: "Balé"
+        capital: "Boromo"
+        latitude: 11.7500
+        longitude: -2.9333
+      - id: "banwa"
+        name: "Banwa"
+        capital: "Solenzo"
+        latitude: 12.1833
+        longitude: -4.0833
+      - id: "kossi"
+        name: "Kossi"
+        capital: "Nouna"
+        latitude: 12.7333
+        longitude: -3.8667
+      - id: "mouhoun"
+        name: "Mouhoun"
+        capital: "Dédougou"
+        latitude: 12.4631
+        longitude: -3.4606
+      - id: "nayala"
+        name: "Nayala"
+        capital: "Toma"
+        latitude: 12.7667
+        longitude: -2.8833
+      - id: "sourou"
+        name: "Sourou"
+        capital: "Tougan"
+        latitude: 13.0667
+        longitude: -3.0667
+
+  - id: "cascades"
+    name: "Cascades"
+    capital: "Banfora"
+    latitude: 10.6333
+    longitude: -4.7667
+    provinces:
+      - id: "comoe"
+        name: "Comoé"
+        capital: "Banfora"
+        latitude: 10.6333
+        longitude: -4.7667
+      - id: "leraba"
+        name: "Léraba"
+        capital: "Sindou"
+        latitude: 10.6667
+        longitude: -5.1667
+
+  - id: "centre"
+    name: "Centre"
+    capital: "Ouagadougou"
+    latitude: 12.3714
+    longitude: -1.5197
+    provinces:
+      - id: "kadiogo"
+        name: "Kadiogo"
+        capital: "Ouagadougou"
+        latitude: 12.3714
+        longitude: -1.5197
+
+  - id: "centre_est"
+    name: "Centre-Est"
+    capital: "Tenkodogo"
+    latitude: 11.7833
+    longitude: -0.3667
+    provinces:
+      - id: "boulgou"
+        name: "Boulgou"
+        capital: "Tenkodogo"
+        latitude: 11.7833
+        longitude: -0.3667
+      - id: "koulpelogo"
+        name: "Koulpélogo"
+        capital: "Ouargaye"
+        latitude: 11.5000
+        longitude: 0.0667
+      - id: "kouritenga"
+        name: "Kouritenga"
+        capital: "Koupéla"
+        latitude: 12.1833
+        longitude: -0.3500
+
+  - id: "centre_nord"
+    name: "Centre-Nord"
+    capital: "Kaya"
+    latitude: 13.0917
+    longitude: -1.0847
+    provinces:
+      - id: "bam"
+        name: "Bam"
+        capital: "Kongoussi"
+        latitude: 13.3333
+        longitude: -1.5333
+      - id: "namentenga"
+        name: "Namentenga"
+        capital: "Boulsa"
+        latitude: 12.6667
+        longitude: -0.5667
+      - id: "sanmatenga"
+        name: "Sanmatenga"
+        capital: "Kaya"
+        latitude: 13.0917
+        longitude: -1.0847
+
+  - id: "centre_ouest"
+    name: "Centre-Ouest"
+    capital: "Koudougou"
+    latitude: 12.2533
+    longitude: -2.3628
+    provinces:
+      - id: "boulkiemde"
+        name: "Boulkiemdé"
+        capital: "Koudougou"
+        latitude: 12.2533
+        longitude: -2.3628
+      - id: "sanguie"
+        name: "Sanguié"
+        capital: "Réo"
+        latitude: 12.3167
+        longitude: -2.4667
+      - id: "sissili"
+        name: "Sissili"
+        capital: "Léo"
+        latitude: 11.1000
+        longitude: -2.1000
+      - id: "ziro"
+        name: "Ziro"
+        capital: "Sapouy"
+        latitude: 11.5500
+        longitude: -1.7667
+
+  - id: "centre_sud"
+    name: "Centre-Sud"
+    capital: "Manga"
+    latitude: 11.6667
+    longitude: -1.0667
+    provinces:
+      - id: "bazega"
+        name: "Bazèga"
+        capital: "Kombissiri"
+        latitude: 12.0667
+        longitude: -1.3333
+      - id: "nahouri"
+        name: "Nahouri"
+        capital: "Pô"
+        latitude: 11.1667
+        longitude: -1.1500
+      - id: "zoundweogo"
+        name: "Zoundwéogo"
+        capital: "Manga"
+        latitude: 11.6667
+        longitude: -1.0667
+
+  - id: "est"
+    name: "Est"
+    capital: "Fada N'Gourma"
+    latitude: 12.0667
+    longitude: 0.3500
+    provinces:
+      - id: "gnagna"
+        name: "Gnagna"
+        capital: "Bogandé"
+        latitude: 12.9833
+        longitude: -0.1333
+      - id: "gourma"
+        name: "Gourma"
+        capital: "Fada N'Gourma"
+        latitude: 12.0667
+        longitude: 0.3500
+      - id: "komondjari"
+        name: "Komondjari"
+        capital: "Gayéri"
+        latitude: 12.6167
+        longitude: 0.4833
+      - id: "kompienga"
+        name: "Kompienga"
+        capital: "Pama"
+        latitude: 11.2500
+        longitude: 0.7000
+      - id: "tapoa"
+        name: "Tapoa"
+        capital: "Diapaga"
+        latitude: 12.0667
+        longitude: 1.7833
+
+  - id: "hauts_bassins"
+    name: "Hauts-Bassins"
+    capital: "Bobo-Dioulasso"
+    latitude: 11.1771
+    longitude: -4.2979
+    provinces:
+      - id: "houet"
+        name: "Houet"
+        capital: "Bobo-Dioulasso"
+        latitude: 11.1771
+        longitude: -4.2979
+      - id: "kenedougou"
+        name: "Kénédougou"
+        capital: "Orodara"
+        latitude: 10.9833
+        longitude: -4.9167
+      - id: "tuy"
+        name: "Tuy"
+        capital: "Houndé"
+        latitude: 11.5000
+        longitude: -3.5167
+
+  - id: "nord"
+    name: "Nord"
+    capital: "Ouahigouya"
+    latitude: 13.5833
+    longitude: -2.4167
+    provinces:
+      - id: "loroum"
+        name: "Loroum"
+        capital: "Titao"
+        latitude: 13.7667
+        longitude: -2.0667
+      - id: "passore"
+        name: "Passoré"
+        capital: "Yako"
+        latitude: 12.9500
+        longitude: -2.2667
+      - id: "yatenga"
+        name: "Yatenga"
+        capital: "Ouahigouya"
+        latitude: 13.5833
+        longitude: -2.4167
+      - id: "zondoma"
+        name: "Zondoma"
+        capital: "Gourcy"
+        latitude: 13.2000
+        longitude: -2.3500
+
+  - id: "plateau_central"
+    name: "Plateau Central"
+    capital: "Ziniaré"
+    latitude: 12.5833
+    longitude: -1.3000
+    provinces:
+      - id: "ganzourgou"
+        name: "Ganzourgou"
+        capital: "Zorgho"
+        latitude: 12.2500
+        longitude: -0.6167
+      - id: "kourweogo"
+        name: "Kourwéogo"
+        capital: "Boussé"
+        latitude: 12.6667
+        longitude: -1.9000
+      - id: "oubritenga"
+        name: "Oubritenga"
+        capital: "Ziniaré"
+        latitude: 12.5833
+        longitude: -1.3000
+
+  - id: "sahel"
+    name: "Sahel"
+    capital: "Dori"
+    latitude: 14.0354
+    longitude: -0.0347
+    provinces:
+      - id: "oudalan"
+        name: "Oudalan"
+        capital: "Gorom-Gorom"
+        latitude: 14.4500
+        longitude: -0.2333
+      - id: "seno"
+        name: "Séno"
+        capital: "Dori"
+        latitude: 14.0354
+        longitude: -0.0347
+      - id: "soum"
+        name: "Soum"
+        capital: "Djibo"
+        latitude: 14.1000
+        longitude: -1.6333
+      - id: "yagha"
+        name: "Yagha"
+        capital: "Sebba"
+        latitude: 13.4333
+        longitude: 0.5333
+
+  - id: "sud_ouest"
+    name: "Sud-Ouest"
+    capital: "Gaoua"
+    latitude: 10.3333
+    longitude: -3.1667
+    provinces:
+      - id: "bougouriba"
+        name: "Bougouriba"
+        capital: "Diébougou"
+        latitude: 10.9667
+        longitude: -3.2500
+      - id: "ioba"
+        name: "Ioba"
+        capital: "Dano"
+        latitude: 11.1500
+        longitude: -3.0667
+      - id: "noumbiel"
+        name: "Noumbiel"
+        capital: "Batié"
+        latitude: 9.8833
+        longitude: -2.9167
+      - id: "poni"
+        name: "Poni"
+        capital: "Gaoua"
+        latitude: 10.3333
+        longitude: -3.1667
+
+cities:
+  - id: "ouagadougou"
+    name: "Ouagadougou"
+    region_id: "centre"
+    province_id: "kadiogo"
+    latitude: 12.3714
+    longitude: -1.5197
+    population: 2800000
+    is_capital: true
+    quartiers:
+      - { id: "ouaga2000", name: "Ouaga 2000", latitude: 12.3300, longitude: -1.4900 }
+      - { id: "pissy", name: "Pissy", latitude: 12.3500, longitude: -1.5600 }
+      - { id: "tampouy", name: "Tampouy", latitude: 12.3900, longitude: -1.5500 }
+      - { id: "dassasgho", name: "Dassasgho", latitude: 12.3800, longitude: -1.4800 }
+      - { id: "gounghin", name: "Gounghin", latitude: 12.3600, longitude: -1.5300 }
+      - { id: "patte_doie", name: "Patte d'Oie", latitude: 12.3550, longitude: -1.5450 }
+      - { id: "kossodo", name: "Kossodo", latitude: 12.4100, longitude: -1.4900 }
+      - { id: "somgande", name: "Somgandé", latitude: 12.3950, longitude: -1.5100 }
+      - { id: "tanghin", name: "Tanghin", latitude: 12.3850, longitude: -1.5200 }
+      - { id: "wemtenga", name: "Wemtenga", latitude: 12.3650, longitude: -1.5000 }
+      - { id: "zogona", name: "Zogona", latitude: 12.3750, longitude: -1.5100 }
+      - { id: "koulouba", name: "Koulouba", latitude: 12.3700, longitude: -1.5400 }
+      - { id: "cissin", name: "Cissin", latitude: 12.3400, longitude: -1.5200 }
+      - { id: "karpala", name: "Karpala", latitude: 12.3500, longitude: -1.4700 }
+      - { id: "wayalghin", name: "Wayalghin", latitude: 12.4000, longitude: -1.5300 }
+
+  - id: "bobo_dioulasso"
+    name: "Bobo-Dioulasso"
+    region_id: "hauts_bassins"
+    province_id: "houet"
+    latitude: 11.1771
+    longitude: -4.2979
+    population: 900000
+    is_capital: false
+    quartiers:
+      - { id: "bobo_centre", name: "Centre-ville", latitude: 11.1770, longitude: -4.2980 }
+      - { id: "bobo_sarfalao", name: "Sarfalao", latitude: 11.1850, longitude: -4.2900 }
+      - { id: "bobo_lafiabougou", name: "Lafiabougou", latitude: 11.1700, longitude: -4.3100 }
+      - { id: "bobo_belleville", name: "Belleville", latitude: 11.1650, longitude: -4.2850 }
+      - { id: "bobo_accart_ville", name: "Accart-ville", latitude: 11.1800, longitude: -4.3000 }
+
+  - id: "koudougou"
+    name: "Koudougou"
+    region_id: "centre_ouest"
+    province_id: "boulkiemde"
+    latitude: 12.2533
+    longitude: -2.3628
+    population: 160000
+
+  - id: "banfora"
+    name: "Banfora"
+    region_id: "cascades"
+    province_id: "comoe"
+    latitude: 10.6333
+    longitude: -4.7667
+    population: 120000
+
+  - id: "ouahigouya"
+    name: "Ouahigouya"
+    region_id: "nord"
+    province_id: "yatenga"
+    latitude: 13.5833
+    longitude: -2.4167
+    population: 125000
+
+  - id: "kaya"
+    name: "Kaya"
+    region_id: "centre_nord"
+    province_id: "sanmatenga"
+    latitude: 13.0917
+    longitude: -1.0847
+    population: 115000
+
+  - id: "tenkodogo"
+    name: "Tenkodogo"
+    region_id: "centre_est"
+    province_id: "boulgou"
+    latitude: 11.7833
+    longitude: -0.3667
+    population: 80000
+
+  - id: "fada_ngourma"
+    name: "Fada N'Gourma"
+    region_id: "est"
+    province_id: "gourma"
+    latitude: 12.0667
+    longitude: 0.3500
+    population: 75000
+
+  - id: "dedougou"
+    name: "Dédougou"
+    region_id: "boucle_du_mouhoun"
+    province_id: "mouhoun"
+    latitude: 12.4631
+    longitude: -3.4606
+    population: 60000
+
+  - id: "dori"
+    name: "Dori"
+    region_id: "sahel"
+    province_id: "seno"
+    latitude: 14.0354
+    longitude: -0.0347
+    population: 55000
+
+  - id: "koupela"
+    name: "Koupéla"
+    region_id: "centre_est"
+    province_id: "kouritenga"
+    latitude: 12.1833
+    longitude: -0.3500
+    population: 50000
+
+  - id: "ziniare"
+    name: "Ziniaré"
+    region_id: "plateau_central"
+    province_id: "oubritenga"
+    latitude: 12.5833
+    longitude: -1.3000
+    population: 45000
+
+  - id: "manga"
+    name: "Manga"
+    region_id: "centre_sud"
+    province_id: "zoundweogo"
+    latitude: 11.6667
+    longitude: -1.0667
+    population: 40000
+
+  - id: "gaoua"
+    name: "Gaoua"
+    region_id: "sud_ouest"
+    province_id: "poni"
+    latitude: 10.3333
+    longitude: -3.1667
+    population: 40000
+
+  - id: "djibo"
+    name: "Djibo"
+    region_id: "sahel"
+    province_id: "soum"
+    latitude: 14.1000
+    longitude: -1.6333
+    population: 40000
+
+  - id: "kongoussi"
+    name: "Kongoussi"
+    region_id: "centre_nord"
+    province_id: "bam"
+    latitude: 13.3333
+    longitude: -1.5333
+    population: 38000
+
+  - id: "nouna"
+    name: "Nouna"
+    region_id: "boucle_du_mouhoun"
+    province_id: "kossi"
+    latitude: 12.7333
+    longitude: -3.8667
+    population: 35000
+
+  - id: "kombissiri"
+    name: "Kombissiri"
+    region_id: "centre_sud"
+    province_id: "bazega"
+    latitude: 12.0667
+    longitude: -1.3333
+    population: 32000
+
+  - id: "hounde"
+    name: "Houndé"
+    region_id: "hauts_bassins"
+    province_id: "tuy"
+    latitude: 11.5000
+    longitude: -3.5167
+    population: 30000
+
+  - id: "orodara"
+    name: "Orodara"
+    region_id: "hauts_bassins"
+    province_id: "kenedougou"
+    latitude: 10.9833
+    longitude: -4.9167
+    population: 28000
+
+  - id: "reo"
+    name: "Réo"
+    region_id: "centre_ouest"
+    province_id: "sanguie"
+    latitude: 12.3167
+    longitude: -2.4667
+    population: 27000
+
+  - id: "po"
+    name: "Pô"
+    region_id: "centre_sud"
+    province_id: "nahouri"
+    latitude: 11.1667
+    longitude: -1.1500
+    population: 25000
+
+  - id: "yako"
+    name: "Yako"
+    region_id: "nord"
+    province_id: "passore"
+    latitude: 12.9500
+    longitude: -2.2667
+    population: 25000
+
+  - id: "leo"
+    name: "Léo"
+    region_id: "centre_ouest"
+    province_id: "sissili"
+    latitude: 11.1000
+    longitude: -2.1000
+    population: 23000
+
+  - id: "boromo"
+    name: "Boromo"
+    region_id: "boucle_du_mouhoun"
+    province_id: "bale"
+    latitude: 11.7500
+    longitude: -2.9333
+    population: 22000
+
+  - id: "diebougou"
+    name: "Diébougou"
+    region_id: "sud_ouest"
+    province_id: "bougouriba"
+    latitude: 10.9667
+    longitude: -3.2500
+    population: 20000
+
+  - id: "bogande"
+    name: "Bogandé"
+    region_id: "est"
+    province_id: "gnagna"
+    latitude: 12.9833
+    longitude: -0.1333
+    population: 20000
+
+  - id: "diapaga"
+    name: "Diapaga"
+    region_id: "est"
+    province_id: "tapoa"
+    latitude: 12.0667
+    longitude: 1.7833
+    population: 18000
+
+  - id: "gorom_gorom"
+    name: "Gorom-Gorom"
+    region_id: "sahel"
+    province_id: "oudalan"
+    latitude: 14.4500
+    longitude: -0.2333
+    population: 18000
+
+  - id: "tougan"
+    name: "Tougan"
+    region_id: "boucle_du_mouhoun"
+    province_id: "sourou"
+    latitude: 13.0667
+    longitude: -3.0667
+    population: 17000
+
+  - id: "boulsa"
+    name: "Boulsa"
+    region_id: "centre_nord"
+    province_id: "namentenga"
+    latitude: 12.6667
+    longitude: -0.5667
+    population: 16000
+
+  - id: "solenzo"
+    name: "Solenzo"
+    region_id: "boucle_du_mouhoun"
+    province_id: "banwa"
+    latitude: 12.1833
+    longitude: -4.0833
+    population: 15000
+
+  - id: "sindou"
+    name: "Sindou"
+    region_id: "cascades"
+    province_id: "leraba"
+    latitude: 10.6667
+    longitude: -5.1667
+    population: 14000
+
+  - id: "gourcy"
+    name: "Gourcy"
+    region_id: "nord"
+    province_id: "zondoma"
+    latitude: 13.2000
+    longitude: -2.3500
+    population: 14000
+
+  - id: "zorgho"
+    name: "Zorgho"
+    region_id: "plateau_central"
+    province_id: "ganzourgou"
+    latitude: 12.2500
+    longitude: -0.6167
+    population: 13000
+
+  - id: "bousse"
+    name: "Boussé"
+    region_id: "plateau_central"
+    province_id: "kourweogo"
+    latitude: 12.6667
+    longitude: -1.9000
+    population: 12000
+
+  - id: "sapouy"
+    name: "Sapouy"
+    region_id: "centre_ouest"
+    province_id: "ziro"
+    latitude: 11.5500
+    longitude: -1.7667
+    population: 11000
+
+  - id: "toma"
+    name: "Toma"
+    region_id: "boucle_du_mouhoun"
+    province_id: "nayala"
+    latitude: 12.7667
+    longitude: -2.8833
+    population: 11000
+
+  - id: "titao"
+    name: "Titao"
+    region_id: "nord"
+    province_id: "loroum"
+    latitude: 13.7667
+    longitude: -2.0667
+    population: 10000
+
+  - id: "dano"
+    name: "Dano"
+    region_id: "sud_ouest"
+    province_id: "ioba"
+    latitude: 11.1500
+    longitude: -3.0667
+    population: 10000
+
+  - id: "pama"
+    name: "Pama"
+    region_id: "est"
+    province_id: "kompienga"
+    latitude: 11.2500
+    longitude: 0.7000
+    population: 9000
+
+  - id: "gayeri"
+    name: "Gayéri"
+    region_id: "est"
+    province_id: "komondjari"
+    latitude: 12.6167
+    longitude: 0.4833
+    population: 9000
+
+  - id: "sebba"
+    name: "Sebba"
+    region_id: "sahel"
+    province_id: "yagha"
+    latitude: 13.4333
+    longitude: 0.5333
+    population: 8000
+
+  - id: "ouargaye"
+    name: "Ouargaye"
+    region_id: "centre_est"
+    province_id: "koulpelogo"
+    latitude: 11.5000
+    longitude: 0.0667
+    population: 8000
+
+  - id: "batie"
+    name: "Batié"
+    region_id: "sud_ouest"
+    province_id: "noumbiel"
+    latitude: 9.8833
+    longitude: -2.9167
+    population: 7000
+
+apis:
+  open_meteo:
+    weather_forecast: "https://api.open-meteo.com/v1/forecast"
+    weather_archive: "https://archive-api.open-meteo.com/v1/archive"
+    air_quality: "https://air-quality-api.open-meteo.com/v1/air-quality"
+    flood: "https://flood-api.open-meteo.com/v1/flood"
+  nasa_power:
+    base_url: "https://power.larc.nasa.gov/api/temporal"
+
+data_collection:
+  historical_start_date: "2023-01-01"
+  weather:
+    frequency_minutes: 60
+    forecast_days: 16
+    archive_variables:
+      - "temperature_2m_max"
+      - "temperature_2m_min"
+      - "temperature_2m_mean"
+      - "precipitation_sum"
+      - "wind_speed_10m_max"
+      - "relative_humidity_2m_mean"
+      - "et0_fao_evapotranspiration"
+    current_variables:
+      - "temperature_2m"
+      - "relative_humidity_2m"
+      - "precipitation"
+      - "wind_speed_10m"
+      - "wind_direction_10m"
+      - "pressure_msl"
+      - "cloud_cover"
+    daily_variables:
+      - "temperature_2m_max"
+      - "temperature_2m_min"
+      - "precipitation_sum"
+      - "precipitation_probability_max"
+      - "wind_speed_10m_max"
+      - "et0_fao_evapotranspiration"
+      - "uv_index_max"
+
+  air_quality:
+    frequency_minutes: 120
+    variables:
+      - "pm10"
+      - "pm2_5"
+      - "carbon_monoxide"
+      - "nitrogen_dioxide"
+      - "sulphur_dioxide"
+      - "ozone"
+      - "dust"
+      - "european_aqi"
+
+  flood:
+    frequency_minutes: 360
+    forecast_days: 92
+
+  climate:
+    frequency_hours: 24
+    nasa_parameters:
+      - "T2M"
+      - "T2M_MAX"
+      - "T2M_MIN"
+      - "PRECTOTCORR"
+      - "RH2M"
+      - "WS10M"
+      - "ALLSKY_SFC_SW_DWN"
+
+ml:
+  training:
+    initial_epochs: 50
+    continuous_epochs: 10
+    retrain_frequency_hours: 24
+    min_data_points: 5
+    test_size: 0.2
+    random_state: 42
+  models:
+    weather:
+      algorithm: "gradient_boosting"
+      features: ["temperature_mean", "humidity", "precipitation", "wind_speed", "day_of_year", "month"]
+      target_variables: ["temperature_max", "temperature_min", "precipitation", "humidity"]
+      forecast_horizon_days: 7
+    flood:
+      algorithm: "random_forest"
+      features: ["river_discharge", "precipitation_7d", "precipitation_30d", "month", "day_of_year"]
+      target_variables: ["river_discharge", "flood_risk"]
+      forecast_horizon_days: 30
+    air_quality:
+      algorithm: "gradient_boosting"
+      features: ["pm10", "pm2_5", "dust", "temperature", "humidity", "wind_speed", "month"]
+      target_variables: ["pm10", "pm2_5", "aqi"]
+      forecast_horizon_days: 3
+    drought:
+      algorithm: "random_forest"
+      features: ["precipitation_30d", "precipitation_90d", "temperature_mean", "evapotranspiration", "month"]
+      target_variables: ["spi", "drought_risk"]
+      forecast_horizon_days: 30
+
+alerts:
+  thresholds:
+    flood:
+      low: 10
+      moderate: 50
+      high: 100
+      extreme: 200
+    air_quality:
+      good: 20
+      fair: 40
+      moderate: 60
+      poor: 80
+      very_poor: 100
+    drought:
+      normal: -0.5
+      moderate: -1.0
+      severe: -1.5
+      extreme: -2.0
+    temperature:
+      heat_warning: 42
+      heat_extreme: 45
+      cold_warning: 10
