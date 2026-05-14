@@ -43,6 +43,7 @@ async def get_config():
         "ml": {
             "retrain_frequency_hours": config.ml_config["training"]["retrain_frequency_hours"],
         },
+        "alert_thresholds": config.alert_thresholds,
     }
 
 

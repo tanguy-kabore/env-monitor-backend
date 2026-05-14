@@ -387,21 +387,22 @@ async def generate_predictions() -> dict:
                                future.timetuple().tm_yday, future.month]])
                 pred_val = float(model.predict(X)[0])
                 last_discharge = pred_val
-                thresholds = config.alert_thresholds.get("flood", {})
+                flood_t = config.alert_thresholds.get("flood", {})
                 risk = "low"
-                if pred_val >= thresholds.get("extreme", 200):
+                if pred_val >= flood_t.get("extreme"):
                     risk = "extreme"
-                elif pred_val >= thresholds.get("high", 100):
+                elif pred_val >= flood_t.get("high"):
                     risk = "high"
-                elif pred_val >= thresholds.get("moderate", 50):
+                elif pred_val >= flood_t.get("moderate"):
                     risk = "moderate"
 
+                high_t = flood_t.get("high", 1)
                 flood_preds.append({
                     "location_id": loc_uuid,
                     "predicted_at": now.isoformat(),
                     "target_date": future.strftime("%Y-%m-%d"),
                     "river_discharge": round(max(0, pred_val), 3),
-                    "flood_probability": min(1.0, max(0, pred_val / 100)),
+                    "flood_probability": min(1.0, max(0, pred_val / high_t)),
                     "risk_level": risk,
                     "model_version": f"v{now.strftime('%Y%m%d%H%M')}",
                 })

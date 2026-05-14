@@ -76,9 +76,9 @@ async def get_flood_history(
     client = get_supabase()
     uuid = resolve_location_uuid(location_id)
     thresholds = get_app_config().alert_thresholds.get("flood", {})
-    high_t = thresholds.get("high", 100)
-    moderate_t = thresholds.get("moderate", 50)
-    extreme_t = thresholds.get("extreme", 200)
+    high_t = thresholds.get("high")
+    moderate_t = thresholds.get("moderate")
+    extreme_t = thresholds.get("extreme")
 
     now = datetime.utcnow()
     start = (now - timedelta(days=days)).isoformat()

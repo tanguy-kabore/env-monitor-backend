@@ -393,11 +393,11 @@ def _safe_idx(lst, idx):
 def _classify_flood_risk(discharge, thresholds):
     if discharge is None:
         return "low"
-    if discharge >= thresholds.get("extreme", 200):
+    if discharge >= thresholds.get("extreme"):
         return "extreme"
-    if discharge >= thresholds.get("high", 100):
+    if discharge >= thresholds.get("high"):
         return "high"
-    if discharge >= thresholds.get("moderate", 50):
+    if discharge >= thresholds.get("moderate"):
         return "moderate"
     return "low"
 
@@ -411,11 +411,11 @@ def _compute_simple_spi(precip_30d):
 
 
 def _classify_drought(spi, thresholds):
-    if spi <= thresholds.get("extreme", -2.0):
+    if spi <= thresholds.get("extreme"):
         return "extreme"
-    if spi <= thresholds.get("severe", -1.5):
+    if spi <= thresholds.get("severe"):
         return "severe"
-    if spi <= thresholds.get("moderate", -1.0):
+    if spi <= thresholds.get("moderate"):
         return "moderate"
     return "normal"
 

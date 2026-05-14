@@ -839,23 +839,44 @@ ml:
 
 alerts:
   thresholds:
+    # Débit fluvial (m³/s) — seuils adaptés aux rivières sahéliennes du Burkina Faso
+    # Basé sur les percentiles GloFAS ERA5 et les crues historiques documentées :
+    # - Nakambé/Ouagadougou : débit moyen saison sèche ~5–15 m³/s, crues sept. 2009/2024 > 200 m³/s
+    # - Mouhoun (Volta Noire) : plus grand fleuve, crues majeures > 400 m³/s
+    # - Seuil "faible" relevé à 20 pour éviter les faux positifs en saison sèche
+    # Source : GloFAS v4 (Copernicus EMS), OCHA Burkina Faso flood reports 2020–2024
     flood:
-      low: 10
-      moderate: 50
-      high: 100
-      extreme: 200
+      low: 20          # Débit saisonnier normal — vigilance simple
+      moderate: 75     # ~Q2 (crue biennale) — surveillance renforcée
+      high: 150        # ~Q5 (crue quinquennale) — alerte élevée, évacuation possible
+      extreme: 300     # ~Q20 (crue vicennale) — urgence, crues type sept. 2009 (264mm/12h)
+
+    # Indice AQI européen (EAQI) utilisé par Open-Meteo/CAMS
+    # Contexte BF : PM2.5 annuel moyen = 43 µg/m³ (4× seuil OMS 10 µg/m³)
+    # Harmattan (déc–fév) : PM2.5 peut dépasser 150–200 µg/m³
+    # Source : UNEP/DICF Burkina Faso 2024, étude RSC Advances Ouagadougou 2024
     air_quality:
-      good: 20
-      fair: 40
-      moderate: 60
-      poor: 80
-      very_poor: 100
+      good: 20         # EAQI Bon — rare au BF hors saison des pluies
+      fair: 40         # EAQI Acceptable
+      moderate: 60     # EAQI Modéré — dépasse souvent en saison sèche
+      poor: 80         # EAQI Mauvais — courant en période harmattan
+      very_poor: 100   # EAQI Très mauvais — pics harmattan / feux de brousse
+
+    # Indice SPI (Standardized Precipitation Index) — standard OMM/NDMC
+    # Valeurs négatives = déficit pluviométrique
+    # Source : WMO Guidelines on SPI (2012), applicable Sahel
     drought:
-      normal: -0.5
-      moderate: -1.0
-      severe: -1.5
-      extreme: -2.0
+      normal: -0.5     # SPI > -0.5 : situation normale
+      moderate: -1.0   # SPI -0.5 à -1.0 : sécheresse modérée
+      severe: -1.5     # SPI -1.0 à -1.5 : sécheresse sévère
+      extreme: -2.0    # SPI < -2.0 : sécheresse extrême (type 1984, 2011)
+
+    # Températures (°C) — basées sur données climatiques Ouagadougou
+    # Moy. max avril (mois le plus chaud) : 39°C | Record absolu : 45.1°C (avril 1999, OMM)
+    # Saison très chaude (mars–mai) : max quotidien moyen > 38°C
+    # Min historique Ouagadougou : ~13°C (janv.) — risque froid quasi inexistant
+    # Source : WeatherSpark / ERA5 Ouagadougou, OMM station 65503
     temperature:
-      heat_warning: 42
-      heat_extreme: 45
-      cold_warning: 10
+      heat_warning: 40   # Dépasse la moyenne max de saison chaude (38–39°C) — vigilance
+      heat_extreme: 43   # Seuil canicule sévère — rare mais documenté (> 43°C en avril/mai)
+      cold_warning: 15   # Froid relatif sahelien — nuits fraîches janv./fév. nord BF
