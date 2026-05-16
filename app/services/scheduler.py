@@ -1,5 +1,6 @@
 import logging
 import asyncio
+from datetime import datetime, timedelta, timezone
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from app.config import get_app_config
@@ -7,6 +8,11 @@ from app.config import get_app_config
 logger = logging.getLogger(__name__)
 
 scheduler = AsyncIOScheduler()
+
+
+def _delay(minutes: int):
+    """Return a UTC-aware datetime offset from now, used to stagger first runs."""
+    return datetime.now(timezone.utc) + timedelta(minutes=minutes)
 
 
 def setup_scheduler():
@@ -26,12 +32,15 @@ def setup_scheduler():
     from app.routers.alerts import archive_daily_alerts as _archive_daily_alerts
     from apscheduler.triggers.cron import CronTrigger
 
+    # Stagger first runs so all jobs don't fire simultaneously at boot.
+    # Offsets are chosen so heavier jobs start after lighter ones finish.
     scheduler.add_job(
         _run_async(collect_current_weather),
         IntervalTrigger(minutes=dc["weather"]["frequency_minutes"]),
         id="collect_weather",
         name="Collect current weather data",
         replace_existing=True,
+        next_run_time=_delay(5),
     )
 
     scheduler.add_job(
@@ -40,6 +49,7 @@ def setup_scheduler():
         id="collect_air_quality",
         name="Collect air quality data",
         replace_existing=True,
+        next_run_time=_delay(8),
     )
 
     scheduler.add_job(
@@ -48,6 +58,7 @@ def setup_scheduler():
         id="collect_flood",
         name="Collect flood data",
         replace_existing=True,
+        next_run_time=_delay(11),
     )
 
     scheduler.add_job(
@@ -56,6 +67,7 @@ def setup_scheduler():
         id="collect_climate",
         name="Collect climate data",
         replace_existing=True,
+        next_run_time=_delay(60),
     )
 
     scheduler.add_job(
@@ -64,23 +76,26 @@ def setup_scheduler():
         id="compute_drought",
         name="Compute drought indicators",
         replace_existing=True,
+        next_run_time=_delay(90),
     )
 
     retrain_hours = ml["training"]["retrain_frequency_hours"]
     scheduler.add_job(
-        _run_async(train_all_models),
+        _run_ml_in_thread(train_all_models),
         IntervalTrigger(hours=retrain_hours),
         id="retrain_models",
         name="Retrain ML models",
         replace_existing=True,
+        next_run_time=_delay(120),
     )
 
     scheduler.add_job(
-        _run_async(generate_predictions),
+        _run_ml_in_thread(generate_predictions),
         IntervalTrigger(hours=6),
         id="generate_predictions",
         name="Generate predictions",
         replace_existing=True,
+        next_run_time=_delay(30),
     )
 
     # Alert generation — runs every 60 min, after weather + air quality have updated
@@ -97,6 +112,7 @@ def setup_scheduler():
         id="generate_alerts",
         name="Auto-generate environmental alerts",
         replace_existing=True,
+        next_run_time=_delay(15),
     )
 
     # Daily archive — 23:59 every day: snapshot persisting alerts for clean history
@@ -115,6 +131,25 @@ def setup_scheduler():
         replace_existing=True,
     )
 
+    # Cache warmer — runs every 3 h 30 min to refresh before 4-h TTLs expire
+    from app.services.cache_warmer import warm_caches as _warm_caches
+
+    async def _run_warm_caches():
+        try:
+            result = await _warm_caches()
+            logger.info(f"Scheduled cache warm: {result}")
+        except Exception as e:
+            logger.error(f"Scheduled cache warm failed: {e}")
+
+    scheduler.add_job(
+        _run_warm_caches,
+        IntervalTrigger(minutes=210),   # 3 h 30 min
+        id="warm_caches",
+        name="Proactive cache warmer",
+        replace_existing=True,
+        next_run_time=_delay(20),
+    )
+
     scheduler.start()
     logger.info("Scheduler started with periodic data collection, model training and alert generation")
 
@@ -126,6 +161,28 @@ def _run_async(coro_func):
             logger.info(f"{coro_func.__name__} completed: {result}")
         except Exception as e:
             logger.error(f"{coro_func.__name__} failed: {e}")
+    return wrapper
+
+
+def _run_ml_in_thread(async_func):
+    """Run an async ML function (which contains sync Supabase + sklearn calls) in a
+    dedicated thread with its own event loop so it never blocks the server event loop."""
+    def _sync_runner():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(async_func())
+        finally:
+            loop.close()
+
+    async def wrapper():
+        try:
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, _sync_runner)
+            logger.info(f"{async_func.__name__} completed in thread: {result}")
+        except Exception as e:
+            logger.error(f"{async_func.__name__} failed: {e}")
+
     return wrapper
 
 
@@ -190,5 +247,108 @@ def get_scheduler_jobs():
             "interval_label": _interval_label(job.trigger),
             "next_run": job.next_run_time.isoformat() if job.next_run_time else None,
             "trigger": str(job.trigger),
+            "paused": job.next_run_time is None,
         })
     return jobs
+
+
+def get_job_details(job_id: str):
+    """Get detailed info about a specific job including editable trigger params."""
+    job = scheduler.get_job(job_id)
+    if not job:
+        return None
+    
+    trigger = job.trigger
+    editable = {"minutes": None, "hours": None, "days": None, "cron": None}
+    
+    # Extract current interval values
+    if hasattr(trigger, 'interval'):
+        td = trigger.interval
+        total_seconds = int(td.total_seconds())
+        editable["days"] = total_seconds // 86400
+        editable["hours"] = (total_seconds % 86400) // 3600
+        editable["minutes"] = (total_seconds % 3600) // 60
+    elif hasattr(trigger, 'fields'):
+        # Cron trigger - extract hour/minute
+        fields = trigger.fields
+        editable["cron"] = {
+            "hour": str(fields[5]) if len(fields) > 5 else "*",
+            "minute": str(fields[0]) if len(fields) > 0 else "*",
+        }
+    
+    return {
+        "id": job.id,
+        "name": job.name,
+        "description": JOB_DESC.get(job.id, ""),
+        "editable": editable,
+        "paused": job.next_run_time is None,
+        "next_run": job.next_run_time.isoformat() if job.next_run_time else None,
+    }
+
+
+def update_job_interval(job_id: str, minutes: int = None, hours: int = None, days: int = None, cron: dict = None):
+    """Update a job's trigger interval."""
+    job = scheduler.get_job(job_id)
+    if not job:
+        return False
+    
+    from apscheduler.triggers.interval import IntervalTrigger
+    from apscheduler.triggers.cron import CronTrigger
+    
+    if cron:
+        # Update to cron trigger
+        new_trigger = CronTrigger(hour=cron.get("hour", 0), minute=cron.get("minute", 0))
+    elif days or hours or minutes:
+        # Update interval
+        total_seconds = (days or 0) * 86400 + (hours or 0) * 3600 + (minutes or 0) * 60
+        if total_seconds < 60:
+            total_seconds = 60  # Minimum 1 minute
+        new_trigger = IntervalTrigger(seconds=total_seconds)
+    else:
+        return False
+    
+    scheduler.reschedule_job(job_id, trigger=new_trigger)
+    logger.info(f"Updated schedule for job {job_id}: {new_trigger}")
+    return True
+
+
+def pause_job(job_id: str):
+    """Pause a scheduled job."""
+    job = scheduler.get_job(job_id)
+    if not job:
+        return False
+    scheduler.pause_job(job_id)
+    logger.info(f"Paused job {job_id}")
+    return True
+
+
+def resume_job(job_id: str):
+    """Resume a paused job."""
+    job = scheduler.get_job(job_id)
+    if not job:
+        return False
+    scheduler.resume_job(job_id)
+    logger.info(f"Resumed job {job_id}")
+    return True
+
+
+def run_job_now(job_id: str):
+    """Execute a job immediately (doesn't wait for next scheduled run)."""
+    job = scheduler.get_job(job_id)
+    if not job:
+        return False
+    
+    # Get the job's function and run it
+    if hasattr(job, 'func') and job.func:
+        try:
+            if asyncio.iscoroutinefunction(job.func):
+                # Schedule immediate execution
+                asyncio.create_task(job.func())
+            else:
+                job.func()
+            logger.info(f"Manually triggered job {job_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to run job {job_id}: {e}")
+            return False
+    return False

@@ -324,37 +324,46 @@ async def compute_drought_indicators() -> dict:
     except Exception:
         existing_keys = set()
 
+    # Single batch query for all locations instead of N sequential queries
+    all_uuids = list(uuid_map.values())
+    cutoff_dt = (now - timedelta(days=270)).isoformat()
+    try:
+        all_hist_res = (
+            client.table("weather_data")
+            .select("location_id,observed_at,precipitation,evapotranspiration")
+            .in_("location_id", all_uuids)
+            .gte("observed_at", cutoff_dt)
+            .not_.is_("precipitation", "null")
+            .order("observed_at", desc=False)
+            .limit(all_uuids.__len__() * 300)
+            .execute()
+        )
+        all_hist_data = all_hist_res.data or []
+    except Exception as e:
+        logger.error(f"Batch drought weather fetch failed: {e}")
+        all_hist_data = []
+
+    from collections import defaultdict
+    by_location: dict = defaultdict(dict)
+    for row in all_hist_data:
+        d = row["observed_at"][:10]
+        by_location[row["location_id"]][d] = {
+            "precip": (row["precipitation"] or 0),
+            "et": (row["evapotranspiration"] or 0),
+        }
+
     for ext_id, loc_uuid in uuid_map.items():
         try:
-            # Fetch all daily precip + ET for past 270 days (enough for 90-day windows)
-            hist = (
-                client.table("weather_data")
-                .select("observed_at,precipitation,evapotranspiration")
-                .eq("location_id", loc_uuid)
-                .gte("observed_at", (now - timedelta(days=270)).isoformat())
-                .not_.is_("precipitation", "null")
-                .order("observed_at", desc=False)
-                .execute()
-            )
-            if not hist.data:
+            by_date = by_location.get(loc_uuid, {})
+            if not by_date:
                 continue
-
-            # Build a date-keyed dict of precipitation values
-            by_date: dict = {}
-            for row in hist.data:
-                d = row["observed_at"][:10]
-                by_date[d] = {
-                    "precip": (row["precipitation"] or 0),
-                    "et": (row["evapotranspiration"] or 0),
-                }
 
             sorted_dates = sorted(by_date.keys())
 
-            for i, date_str in enumerate(sorted_dates):
+            for date_str in sorted_dates:
                 if (loc_uuid, date_str) in existing_keys:
                     continue
                 d = datetime.strptime(date_str, "%Y-%m-%d")
-                # Dates within the 30/90-day windows ending on this date
                 d30_start = (d - timedelta(days=30)).strftime("%Y-%m-%d")
                 d90_start = (d - timedelta(days=90)).strftime("%Y-%m-%d")
 

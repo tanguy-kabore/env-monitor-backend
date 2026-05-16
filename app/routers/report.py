@@ -3,10 +3,11 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Query
 from app.database import get_supabase
 from app.config import get_app_config
+from app import cache as _cache
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/report", tags=["Report"])
+router = APIRouter(prefix="/api/v1/report", tags=["Report"])
 
 
 def _safe(val, decimals=2):
@@ -20,10 +21,11 @@ def _safe(val, decimals=2):
 
 @router.get("")
 async def generate_report(days: int = Query(30, ge=7, le=365)):
-    """
-    Aggregate all real data from the DB and return a structured report payload.
-    Nothing is invented: every value comes directly from the database.
-    """
+    cache_key = f"report:{days}"
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     client = get_supabase()
     config = get_app_config()
     now = datetime.now(timezone.utc)
@@ -301,7 +303,7 @@ async def generate_report(days: int = Query(30, ge=7, le=365)):
             timeline_by_date[date_key][t] += 1
     alert_timeline = sorted(timeline_by_date.values(), key=lambda x: x["date"])
 
-    return {
+    response = {
         "meta": {
             "generated_at": now.isoformat(),
             "period_days": days,
@@ -375,3 +377,5 @@ async def generate_report(days: int = Query(30, ge=7, le=365)):
         "alert_timeline": alert_timeline,
         "city_summaries": city_summaries,
     }
+    _cache.set(cache_key, response, ttl=1_800)   # 30 min
+    return response

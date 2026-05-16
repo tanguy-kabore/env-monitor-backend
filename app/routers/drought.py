@@ -1,28 +1,33 @@
 from fastapi import APIRouter, HTTPException, Query
-from app.database import get_supabase, resolve_location_uuid
+from app.database import get_supabase, resolve_location_uuid_async, db_exec
 from app import cache as _cache
 
-router = APIRouter(prefix="/api/drought", tags=["Drought"])
+router = APIRouter(prefix="/api/v1/drought", tags=["Drought"])
 
 
 @router.get("/current/{location_id}")
 async def get_current_drought(location_id: str):
-    client = get_supabase()
-    uuid = resolve_location_uuid(location_id)
+    cache_key = f"drought:current:{location_id}"
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
 
-    result = (
-        client.table("drought_data")
-        .select("*")
+    client = get_supabase()
+    uuid = await resolve_location_uuid_async(location_id)
+
+    result = await db_exec(lambda: client.table("drought_data")
+        .select("id,location_id,observed_at,precipitation_30d,precipitation_90d,spi_value,drought_level,evapotranspiration,source")
         .eq("location_id", uuid)
         .order("observed_at", desc=True)
         .limit(1)
-        .execute()
-    )
+        .execute())
 
     if not result.data:
         raise HTTPException(status_code=404, detail="No drought data available for this location")
 
-    return {"data": result.data[0]}
+    response = {"data": result.data[0]}
+    _cache.set(cache_key, response, ttl=1_800)
+    return response
 
 
 @router.get("/history/{location_id}")
@@ -31,42 +36,46 @@ async def get_drought_history(
     days: int = Query(90, ge=1, le=730),
 ):
     client = get_supabase()
-    uuid = resolve_location_uuid(location_id)
+    uuid = await resolve_location_uuid_async(location_id)
 
     from datetime import datetime, timedelta
     start = (datetime.utcnow() - timedelta(days=days)).isoformat()
 
-    result = (
-        client.table("drought_data")
+    result = await db_exec(lambda: client.table("drought_data")
         .select("observed_at,precipitation_30d,precipitation_90d,spi_value,drought_level,evapotranspiration")
         .eq("location_id", uuid)
         .gte("observed_at", start)
         .order("observed_at", desc=False)
-        .execute()
-    )
+        .limit(days + 50)
+        .execute())
 
     return {"data": result.data, "count": len(result.data)}
 
 
 @router.get("/predictions/{location_id}")
 async def get_drought_predictions(location_id: str):
+    cache_key = f"drought:predictions:{location_id}"
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     client = get_supabase()
-    uuid = resolve_location_uuid(location_id)
+    uuid = await resolve_location_uuid_async(location_id)
 
     from datetime import datetime
     now = datetime.utcnow().isoformat()
 
-    result = (
-        client.table("drought_predictions")
+    result = await db_exec(lambda: client.table("drought_predictions")
         .select("*")
         .eq("location_id", uuid)
         .gte("target_date", now)
         .order("target_date", desc=False)
         .limit(10)
-        .execute()
-    )
+        .execute())
 
-    return {"data": result.data, "count": len(result.data)}
+    response = {"data": result.data, "count": len(result.data)}
+    _cache.set(cache_key, response, ttl=3600)
+    return response
 
 
 @router.get("/map")
@@ -77,23 +86,19 @@ async def get_drought_map():
         return cached
 
     client = get_supabase()
-    locations = (
-        client.table("locations")
+    locations = await db_exec(lambda: client.table("locations")
         .select("id, external_id, name, latitude, longitude")
         .eq("type", "city")
         .order("name")
-        .execute()
-    )
+        .execute())
     loc_by_id = {loc["id"]: loc for loc in locations.data}
 
-    all_drought = (
-        client.table("drought_data")
+    all_drought = await db_exec(lambda: client.table("drought_data")
         .select("location_id,spi_value,drought_level,precipitation_30d,observed_at")
         .in_("location_id", list(loc_by_id.keys()))
         .order("observed_at", desc=True)
         .limit(500)
-        .execute()
-    )
+        .execute())
     latest_by_loc: dict = {}
     for row in (all_drought.data or []):
         lid = row["location_id"]
@@ -105,5 +110,5 @@ async def get_drought_map():
         for loc in locations.data
     ]
     response = {"data": drought_data}
-    _cache.set(cache_key, response, ttl=180)
+    _cache.set(cache_key, response, ttl=1_800)
     return response

@@ -1,10 +1,10 @@
 from fastapi import APIRouter, HTTPException, Query
-from app.database import get_supabase, resolve_location_uuid
+from app.database import get_supabase, resolve_location_uuid_async, db_exec
 from app.services import open_meteo
 from app import cache as _cache
 from typing import Optional
 
-router = APIRouter(prefix="/api/floods", tags=["Floods"])
+router = APIRouter(prefix="/api/v1/floods", tags=["Floods"])
 
 
 @router.get("/current/{location_id}")
@@ -14,55 +14,62 @@ async def get_current_flood_data(location_id: str):
     if cached is not None:
         return cached
     client = get_supabase()
-    uuid = resolve_location_uuid(location_id)
+    uuid = await resolve_location_uuid_async(location_id)
 
-    result = (
-        client.table("flood_data")
-        .select("*")
+    result = await db_exec(lambda: client.table("flood_data")
+        .select("id,location_id,observed_at,river_discharge,flood_risk_level,source")
         .eq("location_id", uuid)
         .order("observed_at", desc=True)
         .limit(1)
-        .execute()
-    )
+        .execute())
 
     if not result.data:
-        loc = (
-            client.table("locations")
+        loc = await db_exec(lambda: client.table("locations")
             .select("latitude, longitude, name")
             .eq("id", uuid)
-            .execute()
-        )
+            .limit(1)
+            .execute())
         if not loc.data:
             raise HTTPException(status_code=404, detail="Location not found")
         live = await open_meteo.fetch_flood_data(
             loc.data[0]["latitude"], loc.data[0]["longitude"]
         )
-        return {"data": live, "source": "live_api", "location": loc.data[0]["name"]}
+        response = {"data": live, "source": "live_api", "location": loc.data[0]["name"]}
+        _cache.set(cache_key, response, ttl=1_800)
+        return response
 
-    return {"data": result.data[0], "source": "database"}
+    response = {"data": result.data[0], "source": "database"}
+    _cache.set(cache_key, response, ttl=1_800)
+    return response
 
 
 @router.get("/forecast/{location_id}")
 async def get_flood_forecast(location_id: str):
-    client = get_supabase()
-    uuid = resolve_location_uuid(location_id)
+    cache_key = f"flood:forecast:{location_id}"
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
 
-    loc = (
-        client.table("locations")
+    client = get_supabase()
+    uuid = await resolve_location_uuid_async(location_id)
+
+    loc = await db_exec(lambda: client.table("locations")
         .select("latitude, longitude, name")
         .eq("id", uuid)
-        .execute()
-    )
+        .limit(1)
+        .execute())
     if not loc.data:
         raise HTTPException(status_code=404, detail="Location not found")
 
     live = await open_meteo.fetch_flood_data(
         loc.data[0]["latitude"], loc.data[0]["longitude"]
     )
-    return {
+    response = {
         "data": live,
         "location": loc.data[0]["name"],
     }
+    _cache.set(cache_key, response, ttl=14_400)
+    return response
 
 
 @router.get("/history/{location_id}")
@@ -70,11 +77,16 @@ async def get_flood_history(
     location_id: str,
     days: int = Query(90, ge=1, le=365),
 ):
+    cache_key = f"flood:history:{location_id}:{days}"
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     from datetime import datetime, timedelta
     from app.config import get_app_config
 
     client = get_supabase()
-    uuid = resolve_location_uuid(location_id)
+    uuid = await resolve_location_uuid_async(location_id)
     thresholds = get_app_config().alert_thresholds.get("flood", {})
     high_t = thresholds.get("high")
     moderate_t = thresholds.get("moderate")
@@ -84,28 +96,24 @@ async def get_flood_history(
     start = (now - timedelta(days=days)).isoformat()
     end = now.isoformat()
 
-    result = (
-        client.table("flood_data")
+    result = await db_exec(lambda: client.table("flood_data")
         .select("observed_at,river_discharge,flood_risk_level")
         .eq("location_id", uuid)
         .gte("observed_at", start)
         .lte("observed_at", end)
         .order("observed_at", desc=False)
-        .execute()
-    )
+        .execute())
 
     db_rows = result.data or []
     db_dates = {r["observed_at"][:10] for r in db_rows}
 
-    # Fetch from Open-Meteo when DB has less than 80% coverage
     api_rows = []
     if len(db_dates) < days * 0.8:
-        loc = (
-            client.table("locations")
+        loc = await db_exec(lambda: client.table("locations")
             .select("latitude, longitude")
             .eq("id", uuid)
-            .execute()
-        )
+            .limit(1)
+            .execute())
         if loc.data:
             try:
                 api_data = await open_meteo.fetch_flood_history(
@@ -117,7 +125,7 @@ async def get_flood_history(
 
                 for t, q in zip(times, discharges):
                     if q is None or t[:10] in db_dates:
-                        continue  # Skip nulls and dates we already have in DB
+                        continue
                     if q >= extreme_t:
                         risk = "extreme"
                     elif q >= high_t:
@@ -132,40 +140,43 @@ async def get_flood_history(
                         "flood_risk_level": risk,
                     })
             except Exception:
-                pass  # Fallback to DB only if API fails
+                pass
 
-    # Merge: DB rows take priority, fill gaps with API rows
     all_rows = sorted(
         db_rows + api_rows,
         key=lambda r: r["observed_at"]
     )
     source = "database" if not api_rows else ("api_only" if not db_rows else "merged")
-    return {"data": all_rows, "count": len(all_rows), "source": source}
+    response = {"data": all_rows, "count": len(all_rows), "source": source}
+    _cache.set(cache_key, response, ttl=7_200)
+    return response
 
 
 @router.get("/predictions/{location_id}")
 async def get_flood_predictions(location_id: str):
+    cache_key = f"flood:predictions:{location_id}"
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     client = get_supabase()
-    uuid = resolve_location_uuid(location_id)
+    uuid = await resolve_location_uuid_async(location_id)
 
     from datetime import datetime, timedelta
     now = datetime.utcnow()
     past_limit = (now - timedelta(days=7)).isoformat()
     future_limit = (now + timedelta(days=30)).isoformat()
 
-    result = (
-        client.table("flood_predictions")
-        .select("*")
+    result = await db_exec(lambda: client.table("flood_predictions")
+        .select("id,location_id,target_date,predicted_at,river_discharge,flood_probability,risk_level,model_version")
         .eq("location_id", uuid)
         .gte("target_date", past_limit)
         .lte("target_date", future_limit)
         .order("target_date", desc=False)
         .order("predicted_at", desc=True)
         .limit(200)
-        .execute()
-    )
+        .execute())
 
-    # Deduplicate: one entry per day (keep latest predicted_at)
     by_day: dict = {}
     for row in result.data:
         day = str(row["target_date"])[:10]
@@ -173,7 +184,9 @@ async def get_flood_predictions(location_id: str):
             by_day[day] = row
 
     deduped = sorted(by_day.values(), key=lambda r: r["target_date"])
-    return {"data": deduped, "count": len(deduped)}
+    response = {"data": deduped, "count": len(deduped)}
+    _cache.set(cache_key, response, ttl=3600)
+    return response
 
 
 @router.get("/risk-map")
@@ -184,23 +197,19 @@ async def get_flood_risk_map():
         return cached
 
     client = get_supabase()
-    locations = (
-        client.table("locations")
+    locations = await db_exec(lambda: client.table("locations")
         .select("id, external_id, name, latitude, longitude")
         .eq("type", "city")
         .order("name")
-        .execute()
-    )
+        .execute())
     loc_by_id = {loc["id"]: loc for loc in locations.data}
 
-    all_flood = (
-        client.table("flood_data")
+    all_flood = await db_exec(lambda: client.table("flood_data")
         .select("location_id,river_discharge,flood_risk_level,observed_at")
         .in_("location_id", list(loc_by_id.keys()))
         .order("observed_at", desc=True)
         .limit(500)
-        .execute()
-    )
+        .execute())
     latest_by_loc: dict = {}
     for row in (all_flood.data or []):
         lid = row["location_id"]
@@ -212,5 +221,5 @@ async def get_flood_risk_map():
         for loc in locations.data
     ]
     response = {"data": risk_data}
-    _cache.set(cache_key, response, ttl=180)
+    _cache.set(cache_key, response, ttl=1_800)
     return response

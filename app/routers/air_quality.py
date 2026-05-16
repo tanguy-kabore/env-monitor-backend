@@ -1,10 +1,10 @@
 from fastapi import APIRouter, HTTPException, Query
-from app.database import get_supabase, resolve_location_uuid
+from app.database import get_supabase, resolve_location_uuid_async, db_exec
 from app.services import open_meteo
 from app import cache as _cache
 from typing import Optional
 
-router = APIRouter(prefix="/api/air-quality", tags=["Air Quality"])
+router = APIRouter(prefix="/api/v1/air-quality", tags=["Air Quality"])
 
 
 @router.get("/current/{location_id}")
@@ -15,24 +15,21 @@ async def get_current_air_quality(location_id: str):
         return cached
 
     client = get_supabase()
-    uuid = resolve_location_uuid(location_id)
+    uuid = await resolve_location_uuid_async(location_id)
 
-    result = (
-        client.table("air_quality_data")
-        .select("*")
+    result = await db_exec(lambda: client.table("air_quality_data")
+        .select("id,location_id,observed_at,pm2_5,pm10,no2,so2,o3,co,dust,aqi,source")
         .eq("location_id", uuid)
         .order("observed_at", desc=True)
         .limit(1)
-        .execute()
-    )
+        .execute())
 
     if not result.data:
-        loc = (
-            client.table("locations")
+        loc = await db_exec(lambda: client.table("locations")
             .select("latitude, longitude, name")
             .eq("id", uuid)
-            .execute()
-        )
+            .limit(1)
+            .execute())
         if not loc.data:
             raise HTTPException(status_code=404, detail="Location not found")
         live = await open_meteo.fetch_air_quality(
@@ -49,25 +46,31 @@ async def get_current_air_quality(location_id: str):
 
 @router.get("/forecast/{location_id}")
 async def get_air_quality_forecast(location_id: str):
-    client = get_supabase()
-    uuid = resolve_location_uuid(location_id)
+    cache_key = f"aq:forecast:{location_id}"
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
 
-    loc = (
-        client.table("locations")
+    client = get_supabase()
+    uuid = await resolve_location_uuid_async(location_id)
+
+    loc = await db_exec(lambda: client.table("locations")
         .select("latitude, longitude, name")
         .eq("id", uuid)
-        .execute()
-    )
+        .limit(1)
+        .execute())
     if not loc.data:
         raise HTTPException(status_code=404, detail="Location not found")
 
     live = await open_meteo.fetch_air_quality_forecast(
         loc.data[0]["latitude"], loc.data[0]["longitude"]
     )
-    return {
+    response = {
         "data": live,
         "location": loc.data[0]["name"],
     }
+    _cache.set(cache_key, response, ttl=14_400)
+    return response
 
 
 @router.get("/history/{location_id}")
@@ -75,43 +78,54 @@ async def get_air_quality_history(
     location_id: str,
     days: int = Query(30, ge=1, le=365),
 ):
+    cache_key = f"aq:history:{location_id}:{days}"
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     client = get_supabase()
-    uuid = resolve_location_uuid(location_id)
+    uuid = await resolve_location_uuid_async(location_id)
 
     from datetime import datetime, timedelta
     start = (datetime.utcnow() - timedelta(days=days)).isoformat()
 
-    result = (
-        client.table("air_quality_data")
+    result = await db_exec(lambda: client.table("air_quality_data")
         .select("observed_at,pm2_5,pm10,dust,aqi,no2,so2,o3,co")
         .eq("location_id", uuid)
         .gte("observed_at", start)
         .order("observed_at", desc=False)
-        .execute()
-    )
+        .limit(days * 4 + 50)
+        .execute())
 
-    return {"data": result.data, "count": len(result.data)}
+    response = {"data": result.data, "count": len(result.data)}
+    _cache.set(cache_key, response, ttl=7_200)
+    return response
 
 
 @router.get("/predictions/{location_id}")
 async def get_air_quality_predictions(location_id: str):
+    cache_key = f"aq:predictions:{location_id}"
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     client = get_supabase()
-    uuid = resolve_location_uuid(location_id)
+    uuid = await resolve_location_uuid_async(location_id)
 
     from datetime import datetime
     now = datetime.utcnow().isoformat()
 
-    result = (
-        client.table("air_quality_predictions")
-        .select("*")
+    result = await db_exec(lambda: client.table("air_quality_predictions")
+        .select("id,location_id,target_date,predicted_at,aqi,pm2_5,pm10,dust,model_version")
         .eq("location_id", uuid)
         .gte("target_date", now)
         .order("target_date", desc=False)
         .limit(10)
-        .execute()
-    )
+        .execute())
 
-    return {"data": result.data, "count": len(result.data)}
+    response = {"data": result.data, "count": len(result.data)}
+    _cache.set(cache_key, response, ttl=3600)
+    return response
 
 
 @router.get("/map")
@@ -122,24 +136,19 @@ async def get_air_quality_map():
         return cached
 
     client = get_supabase()
-    locations = (
-        client.table("locations")
+    locations = await db_exec(lambda: client.table("locations")
         .select("id, external_id, name, latitude, longitude")
         .eq("type", "city")
         .order("name")
-        .execute()
-    )
+        .execute())
     loc_by_id = {loc["id"]: loc for loc in locations.data}
 
-    # Single batch query — fetch latest per location by ordering + deduplicating in Python
-    all_aq = (
-        client.table("air_quality_data")
+    all_aq = await db_exec(lambda: client.table("air_quality_data")
         .select("location_id,pm2_5,pm10,dust,aqi,observed_at")
         .in_("location_id", list(loc_by_id.keys()))
         .order("observed_at", desc=True)
         .limit(500)
-        .execute()
-    )
+        .execute())
     latest_by_loc: dict = {}
     for row in (all_aq.data or []):
         lid = row["location_id"]
@@ -151,5 +160,5 @@ async def get_air_quality_map():
         for loc in locations.data
     ]
     response = {"data": aq_data}
-    _cache.set(cache_key, response, ttl=180)
+    _cache.set(cache_key, response, ttl=1_800)
     return response

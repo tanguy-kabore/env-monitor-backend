@@ -10,7 +10,7 @@ from app.database import get_supabase
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/export", tags=["Export"])
+router = APIRouter(prefix="/api/v1/export", tags=["Export"])
 
 # ── Dataset catalogue ──────────────────────────────────────────────────────────
 # Each entry fully describes the table: fields, units, source, notes.

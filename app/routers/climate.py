@@ -1,9 +1,11 @@
+import asyncio
 from fastapi import APIRouter, HTTPException, Query
-from app.database import get_supabase, get_location_uuid, resolve_location_uuid
+from app.database import get_supabase, get_location_uuid, resolve_location_uuid_async, db_exec
+from typing import Optional
 import logging
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/climate", tags=["Climate Change"])
+router = APIRouter(prefix="/api/v1/climate", tags=["Climate Change"])
 
 
 @router.get("/data/{location_id}")
@@ -13,18 +15,17 @@ async def get_climate_data(
     end_year: int = Query(2025, le=2030),
 ):
     client = get_supabase()
-    uuid = resolve_location_uuid(location_id)
+    uuid = await resolve_location_uuid_async(location_id)
 
-    result = (
-        client.table("climate_data")
-        .select("*")
+    result = await db_exec(lambda: client.table("climate_data")
+        .select("id,location_id,year,month,avg_temperature,max_temperature,min_temperature,total_precipitation,avg_humidity,avg_wind_speed,solar_radiation,source")
         .eq("location_id", uuid)
         .gte("year", start_year)
         .lte("year", end_year)
         .order("year")
         .order("month")
-        .execute()
-    )
+        .limit((end_year - start_year + 1) * 12 + 10)
+        .execute())
 
     return {"data": result.data, "count": len(result.data)}
 
@@ -32,26 +33,30 @@ async def get_climate_data(
 @router.get("/trends/{location_id}")
 async def get_climate_trends(
     location_id: str,
-    start_year: int = Query(None, ge=2000, description="Première année (défaut: auto)"),
+    start_year: Optional[int] = Query(None, ge=2000, description="Première année (défaut: auto)"),
 ):
+    from app import cache as _cache
+
+    cache_key = f"climate:trends:{location_id}:{start_year}"
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     import pandas as pd
     import numpy as np
     from datetime import datetime as _dt
     from app.services.open_meteo import fetch_historical_weather
 
     client = get_supabase()
-    uuid = resolve_location_uuid(location_id)
+    uuid = await resolve_location_uuid_async(location_id)
     current_year = _dt.utcnow().year
 
-    # --- Auto-detect earliest available data year ---
-    earliest_res = (
-        client.table("weather_data")
+    earliest_res = await db_exec(lambda: client.table("weather_data")
         .select("observed_at")
         .eq("location_id", uuid)
         .order("observed_at", desc=False)
         .limit(1)
-        .execute()
-    )
+        .execute())
     earliest_db_year = None
     if earliest_res.data:
         try:
@@ -62,36 +67,40 @@ async def get_climate_trends(
     if start_year is None:
         start_year = earliest_db_year or (current_year - 4)
 
-    # Also load climate_data as fallback
-    cd_res = (
-        client.table("climate_data")
-        .select("year,month,avg_temperature,total_precipitation,avg_humidity,solar_radiation")
-        .eq("location_id", uuid)
-        .order("year").order("month")
-        .execute()
+    # Run these two reads in parallel since they're independent
+    cd_res, loc_res = await asyncio.gather(
+        db_exec(lambda: client.table("climate_data")
+            .select("year,month,avg_temperature,total_precipitation,avg_humidity,solar_radiation")
+            .eq("location_id", uuid)
+            .order("year").order("month")
+            .execute()),
+        db_exec(lambda: client.table("locations")
+            .select("latitude,longitude")
+            .eq("id", uuid)
+            .limit(1)
+            .execute()),
     )
     climate_years = len(set(r["year"] for r in cd_res.data)) if cd_res.data else 0
 
-    # --- Build from weather_data DB rows (use temperature OR temperature_mean OR temperature_max) ---
-    db_rows: list = []
-    for lt_gte, page_start, page_limit in [
-        ("range", f"{start_year}-01-01", f"{current_year}-01-01"),
-        ("gte",   f"{current_year}-01-01", None),
-    ]:
-        q = (
-            client.table("weather_data")
+    # Fetch weather_data in two range passes (run in parallel)
+    def _build_q(lt_gte, page_start, page_limit):
+        q = (client.table("weather_data")
             .select("observed_at,temperature,temperature_mean,temperature_max,temperature_min,precipitation,humidity")
             .eq("location_id", uuid)
             .order("observed_at", desc=False)
-            .limit(3000)
-        )
+            .limit(3000))
         if lt_gte == "range":
-            q = q.gte("observed_at", page_start).lt("observed_at", page_limit)
-        else:
-            q = q.gte("observed_at", page_start)
-        db_rows += q.execute().data or []
+            return q.gte("observed_at", page_start).lt("observed_at", page_limit)
+        return q.gte("observed_at", page_start)
 
-    # Normalise: pick best available temperature field
+    q_hist = _build_q("range", f"{start_year}-01-01", f"{current_year}-01-01")
+    q_curr = _build_q("gte", f"{current_year}-01-01", None)
+    res_hist, res_curr = await asyncio.gather(
+        db_exec(lambda q=q_hist: q.execute()),
+        db_exec(lambda q=q_curr: q.execute()),
+    )
+    db_rows: list = (res_hist.data or []) + (res_curr.data or [])
+
     for row in db_rows:
         t = row.get("temperature_mean") or row.get("temperature") or row.get("temperature_max")
         row["_temp"] = t
@@ -101,16 +110,9 @@ async def get_climate_trends(
         _tmp = pd.to_datetime([r["observed_at"] for r in db_rows])
         db_years_available = set(_tmp.year.tolist())
 
-    # --- Fetch ERA5 for years missing from DB ---
     needed_years = set(range(start_year, current_year)) - db_years_available
     era5_rows: list = []
     if needed_years:
-        loc_res = (
-            client.table("locations")
-            .select("latitude,longitude")
-            .eq("id", uuid)
-            .execute()
-        )
         if loc_res.data:
             lat = loc_res.data[0]["latitude"]
             lon = loc_res.data[0]["longitude"]
@@ -161,89 +163,95 @@ async def get_climate_trends(
         return {"monthly": cd_res.data, "yearly_trends": yearly, "source": "climate_data",
                 "earliest_year": start_year}
 
-    df = pd.DataFrame(combined)
-    df["observed_at"] = pd.to_datetime(df["observed_at"])
-    df["year"] = df["observed_at"].dt.year
-    df["month"] = df["observed_at"].dt.month
-    df = df[df["year"] >= start_year].copy()
-    df["_temp"] = pd.to_numeric(df["_temp"], errors="coerce")
-    df["precipitation"] = pd.to_numeric(df.get("precipitation"), errors="coerce")
-    df["humidity"] = pd.to_numeric(df.get("humidity"), errors="coerce")
+    # Offload CPU-bound pandas aggregation to a thread so the event loop stays free
+    def _compute(rows, sy, cy):
+        df = pd.DataFrame(rows)
+        df["observed_at"] = pd.to_datetime(df["observed_at"])
+        df["year"] = df["observed_at"].dt.year
+        df["month"] = df["observed_at"].dt.month
+        df = df[df["year"] >= sy].copy()
+        df["_temp"] = pd.to_numeric(df["_temp"], errors="coerce")
+        df["precipitation"] = pd.to_numeric(df.get("precipitation"), errors="coerce")
+        df["humidity"] = pd.to_numeric(df.get("humidity"), errors="coerce")
 
-    # --- Monthly aggregates ---
-    monthly_df = df.groupby(["year", "month"]).agg(
-        avg_temperature=("_temp", "mean"),
-        total_precipitation=("precipitation", "sum"),
-        avg_humidity=("humidity", "mean"),
-    ).reset_index()
-    monthly_df["solar_radiation"] = None
-    monthly = monthly_df.to_dict("records")
+        monthly_df = df.groupby(["year", "month"]).agg(
+            avg_temperature=("_temp", "mean"),
+            total_precipitation=("precipitation", "sum"),
+            avg_humidity=("humidity", "mean"),
+        ).reset_index()
+        monthly_df["solar_radiation"] = None
+        monthly = monthly_df.to_dict("records")
 
-    # --- Yearly aggregates ---
-    yearly_df = df.groupby("year").agg(
-        avg_temperature=("_temp", "mean"),
-        total_precipitation=("precipitation", "sum"),
-        avg_humidity=("humidity", "mean"),
-        temp_max=("_temp", "max"),
-        temp_min=("_temp", "min"),
-    ).reset_index()
-    yearly = yearly_df.to_dict("records")
+        yearly_df = df.groupby("year").agg(
+            avg_temperature=("_temp", "mean"),
+            total_precipitation=("precipitation", "sum"),
+            avg_humidity=("humidity", "mean"),
+            temp_max=("_temp", "max"),
+            temp_min=("_temp", "min"),
+        ).reset_index()
+        yearly = yearly_df.to_dict("records")
 
-    # Thermal anomaly: deviation from long-term mean
-    all_mean_temp = float(yearly_df["avg_temperature"].mean()) if len(yearly_df) > 1 else None
-    for row in yearly:
-        row["partial"] = (row["year"] == current_year)
-        if all_mean_temp is not None:
-            row["temp_anomaly"] = round(float(row["avg_temperature"]) - all_mean_temp, 3)
-        else:
-            row["temp_anomaly"] = None
+        all_mean_temp = float(yearly_df["avg_temperature"].mean()) if len(yearly_df) > 1 else None
+        for row in yearly:
+            row["partial"] = (row["year"] == cy)
+            if all_mean_temp is not None:
+                row["temp_anomaly"] = round(float(row["avg_temperature"]) - all_mean_temp, 3)
+            else:
+                row["temp_anomaly"] = None
 
-    # --- Seasonal breakdown (monthly basis): dry = Nov-Apr, wet = May-Oct for Sahel ---
-    monthly_df["season"] = monthly_df["month"].apply(
-        lambda m: "humide" if 5 <= m <= 10 else "sèche"
-    )
-    seasonal_df = monthly_df.groupby(["year", "season"]).agg(
-        avg_temperature=("avg_temperature", "mean"),
-        total_precipitation=("total_precipitation", "sum"),
-    ).reset_index()
-    seasonal = seasonal_df.to_dict("records")
+        monthly_df["season"] = monthly_df["month"].apply(
+            lambda m: "humide" if 5 <= m <= 10 else "sèche"
+        )
+        seasonal_df = monthly_df.groupby(["year", "season"]).agg(
+            avg_temperature=("avg_temperature", "mean"),
+            total_precipitation=("total_precipitation", "sum"),
+        ).reset_index()
+        seasonal = seasonal_df.to_dict("records")
 
-    # --- Hottest / driest / wettest months per year ---
-    extremes = []
-    for yr, grp in monthly_df.groupby("year"):
-        hottest = grp.loc[grp["avg_temperature"].idxmax()] if grp["avg_temperature"].notna().any() else None
-        wettest = grp.loc[grp["total_precipitation"].idxmax()] if grp["total_precipitation"].notna().any() else None
+        extremes = []
         month_names_fr = ["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Août","Septembre","Octobre","Novembre","Décembre"]
-        extremes.append({
-            "year": int(yr),
-            "hottest_month": month_names_fr[int(hottest["month"]) - 1] if hottest is not None else None,
-            "hottest_temp": round(float(hottest["avg_temperature"]), 1) if hottest is not None else None,
-            "wettest_month": month_names_fr[int(wettest["month"]) - 1] if wettest is not None else None,
-            "wettest_precip": round(float(wettest["total_precipitation"]), 1) if wettest is not None else None,
-        })
+        for yr, grp in monthly_df.groupby("year"):
+            hottest = grp.loc[grp["avg_temperature"].idxmax()] if grp["avg_temperature"].notna().any() else None
+            wettest = grp.loc[grp["total_precipitation"].idxmax()] if grp["total_precipitation"].notna().any() else None
+            extremes.append({
+                "year": int(yr),
+                "hottest_month": month_names_fr[int(hottest["month"]) - 1] if hottest is not None else None,
+                "hottest_temp": round(float(hottest["avg_temperature"]), 1) if hottest is not None else None,
+                "wettest_month": month_names_fr[int(wettest["month"]) - 1] if wettest is not None else None,
+                "wettest_precip": round(float(wettest["total_precipitation"]), 1) if wettest is not None else None,
+            })
 
-    # --- Linear trend slope (°C/year) ---
-    trend_slope = None
-    complete_years = yearly_df[yearly_df["year"] < current_year]
-    if len(complete_years) >= 3:
-        x = complete_years["year"].values.astype(float)
-        y = complete_years["avg_temperature"].values.astype(float)
-        mask = ~np.isnan(y)
-        if mask.sum() >= 3:
-            slope, _ = np.polyfit(x[mask], y[mask], 1)
-            trend_slope = round(float(slope), 4)
+        trend_slope = None
+        complete_years = yearly_df[yearly_df["year"] < cy]
+        if len(complete_years) >= 3:
+            x = complete_years["year"].values.astype(float)
+            y_vals = complete_years["avg_temperature"].values.astype(float)
+            mask = ~np.isnan(y_vals)
+            if mask.sum() >= 3:
+                slope, _ = np.polyfit(x[mask], y_vals[mask], 1)
+                trend_slope = round(float(slope), 4)
+
+        return {
+            "monthly": monthly,
+            "yearly_trends": yearly,
+            "seasonal": seasonal,
+            "extremes": extremes,
+            "trend_slope": trend_slope,
+            "long_mean_temp": all_mean_temp,
+            "earliest_year": int(df["year"].min()) if not df.empty else sy,
+        }
+
+    computed = await asyncio.to_thread(_compute, combined, start_year, current_year)
+    all_mean_temp = computed.pop("long_mean_temp")
 
     source = "era5+db" if era5_rows else "weather_archive"
-    return {
-        "monthly": monthly,
-        "yearly_trends": yearly,
-        "seasonal": seasonal,
-        "extremes": extremes,
-        "trend_slope": trend_slope,
+    result = {
+        **computed,
         "long_term_mean_temp": round(float(all_mean_temp), 2) if all_mean_temp is not None else None,
         "source": source,
-        "earliest_year": int(df["year"].min()) if not df.empty else start_year,
     }
+    _cache.set(cache_key, result, ttl=86_400)
+    return result
 
 
 @router.get("/comparison")
@@ -253,32 +261,22 @@ async def compare_climate(
     client = get_supabase()
     ids = [lid.strip() for lid in location_ids.split(",")]
 
-    comparison = []
-    for ext_id in ids:
-        uuid = get_location_uuid(ext_id)
+    async def _fetch_one(ext_id: str):
+        uuid = await asyncio.to_thread(get_location_uuid, ext_id)
         if not uuid:
-            continue
-
-        loc = (
-            client.table("locations")
-            .select("name")
-            .eq("id", uuid)
-            .execute()
+            return None
+        loc, data = await asyncio.gather(
+            db_exec(lambda u=uuid: client.table("locations").select("name").eq("id", u).limit(1).execute()),
+            db_exec(lambda u=uuid: client.table("climate_data")
+                .select("year,month,avg_temperature,total_precipitation,avg_humidity")
+                .eq("location_id", u).order("year").order("month").execute()),
         )
-
-        data = (
-            client.table("climate_data")
-            .select("year,month,avg_temperature,total_precipitation,avg_humidity")
-            .eq("location_id", uuid)
-            .order("year")
-            .order("month")
-            .execute()
-        )
-
-        comparison.append({
+        return {
             "location_id": ext_id,
             "name": loc.data[0]["name"] if loc.data else ext_id,
             "data": data.data,
-        })
+        }
 
+    results = await asyncio.gather(*[_fetch_one(eid) for eid in ids])
+    comparison = [r for r in results if r is not None]
     return {"data": comparison}

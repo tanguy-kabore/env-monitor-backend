@@ -1,5 +1,5 @@
-from fastapi import APIRouter, BackgroundTasks
-from app.database import get_supabase, get_system_config, set_system_config, check_connection
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from app.database import get_supabase, get_system_config, set_system_config, check_connection, db_exec
 from app.config import get_app_config
 from app.services.data_collector import (
     initialize_locations,
@@ -11,9 +11,9 @@ from app.services.data_collector import (
     compute_drought_indicators,
 )
 from app.services.ml_engine import train_all_models, generate_predictions
-from app.services.scheduler import get_scheduler_jobs
+from app.services.scheduler import get_scheduler_jobs, scheduler, get_job_details, update_job_interval, pause_job, resume_job, run_job_now
 
-router = APIRouter(prefix="/api/system", tags=["System"])
+router = APIRouter(prefix="/api/v1/system", tags=["System"])
 
 
 @router.get("/health")
@@ -62,15 +62,21 @@ async def get_system_status():
     last_train = _cfg("last_model_training")
     jobs = get_scheduler_jobs()
 
+    import asyncio
     client = get_supabase()
-    counts = {}
-    for table in ["weather_data", "flood_data", "air_quality_data", "drought_data", "climate_data",
-                   "weather_predictions", "flood_predictions", "air_quality_predictions"]:
+    tables = ["weather_data", "flood_data", "air_quality_data", "drought_data", "climate_data",
+              "weather_predictions", "flood_predictions", "air_quality_predictions"]
+
+    def _count(table: str):
         try:
-            result = client.table(table).select("id", count="exact").limit(0).execute()
-            counts[table] = result.count if result.count is not None else 0
-        except:
-            counts[table] = 0
+            r = client.table(table).select("id", count="exact").limit(0).execute()
+            return table, r.count if r.count is not None else 0
+        except Exception:
+            return table, 0
+
+    loop = asyncio.get_event_loop()
+    pairs = await asyncio.gather(*[loop.run_in_executor(None, _count, t) for t in tables])
+    counts = dict(pairs)
 
     return {
         "initialized": initialized,
@@ -157,16 +163,40 @@ async def trigger_training(background_tasks: BackgroundTasks):
 
 
 @router.get("/collection-log")
-async def get_collection_log(limit: int = 20):
+async def get_collection_log(
+    limit: int = Query(20, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    status: str = Query(None),
+):
     client = get_supabase()
-    result = (
-        client.table("collection_log")
-        .select("*")
-        .order("created_at", desc=True)
-        .limit(limit)
-        .execute()
-    )
-    return {"data": result.data}
+
+    def _fetch():
+        q = client.table("collection_log").select("*", count="exact").order("created_at", desc=True)
+        if status:
+            q = q.eq("status", status)
+        return q.range(offset, offset + limit - 1).execute()
+
+    result = await db_exec(_fetch)
+    total = result.count if result.count is not None else len(result.data)
+    return {
+        "data": result.data,
+        "pagination": {"total": total, "limit": limit, "offset": offset, "has_more": offset + limit < total},
+    }
+
+
+@router.get("/cache-stats")
+async def get_cache_stats():
+    """Return in-memory cache statistics (hits, misses, entries, tags)."""
+    from app import cache as _cache
+    return _cache.stats()
+
+
+@router.delete("/cache")
+async def clear_cache():
+    """Flush the entire in-memory cache."""
+    from app import cache as _cache
+    _cache.clear()
+    return {"message": "Cache vidé."}
 
 
 @router.post("/collection-log/cleanup")
@@ -252,18 +282,30 @@ async def cleanup_partial_logs():
 
 
 @router.get("/models")
-async def get_ml_models():
+async def get_ml_models(
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    status: str = Query("active"),
+    model_type: str = Query(None),
+):
     client = get_supabase()
-    result = (
-        client.table("ml_models")
-        .select("*", count="exact")
-        .eq("status", "active")
-        .order("model_type")
-        .order("trained_at", desc=True)
-        .limit(500)
-        .execute()
-    )
-    return {"data": result.data, "count": result.count or len(result.data)}
+
+    def _fetch():
+        q = (client.table("ml_models")
+            .select("*", count="exact")
+            .eq("status", status)
+            .order("model_type")
+            .order("trained_at", desc=True))
+        if model_type:
+            q = q.eq("model_type", model_type)
+        return q.range(offset, offset + limit - 1).execute()
+
+    result = await db_exec(_fetch)
+    total = result.count if result.count is not None else len(result.data)
+    return {
+        "data": result.data,
+        "pagination": {"total": total, "limit": limit, "offset": offset, "has_more": offset + limit < total},
+    }
 
 
 @router.post("/models/cleanup")
@@ -433,3 +475,71 @@ async def _run_all_collection():
 
 async def _run_async(func):
     await func()
+
+
+# ── Scheduler Control Endpoints ───────────────────────────────────────────────
+
+from pydantic import BaseModel
+from typing import Optional
+
+class JobIntervalUpdate(BaseModel):
+    minutes: Optional[int] = None
+    hours: Optional[int] = None
+    days: Optional[int] = None
+    cron: Optional[dict] = None
+
+
+@router.get("/scheduler/jobs/{job_id}")
+async def get_job_detail(job_id: str):
+    """Get detailed info about a specific scheduled job."""
+    from app.services.scheduler import get_job_details
+    details = get_job_details(job_id)
+    if not details:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return details
+
+
+@router.post("/scheduler/jobs/{job_id}/run")
+async def run_job_manual(job_id: str, background_tasks: BackgroundTasks):
+    """Manually trigger a scheduled job to run now."""
+    from app.services.scheduler import run_job_now
+    success = run_job_now(job_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Job not found or failed to run")
+    return {"success": True, "message": f"Job {job_id} triggered"}
+
+
+@router.post("/scheduler/jobs/{job_id}/pause")
+async def pause_scheduled_job(job_id: str):
+    """Pause a scheduled job."""
+    from app.services.scheduler import pause_job
+    success = pause_job(job_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"success": True, "message": f"Job {job_id} paused"}
+
+
+@router.post("/scheduler/jobs/{job_id}/resume")
+async def resume_scheduled_job(job_id: str):
+    """Resume a paused job."""
+    from app.services.scheduler import resume_job
+    success = resume_job(job_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"success": True, "message": f"Job {job_id} resumed"}
+
+
+@router.put("/scheduler/jobs/{job_id}/interval")
+async def update_job_schedule(job_id: str, update: JobIntervalUpdate):
+    """Update a job's schedule interval."""
+    from app.services.scheduler import update_job_interval
+    success = update_job_interval(
+        job_id,
+        minutes=update.minutes,
+        hours=update.hours,
+        days=update.days,
+        cron=update.cron
+    )
+    if not success:
+        raise HTTPException(status_code=400, detail="Invalid parameters or job not found")
+    return {"success": True, "message": f"Job {job_id} schedule updated"}

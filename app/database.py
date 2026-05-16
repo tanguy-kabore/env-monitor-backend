@@ -1,9 +1,20 @@
+import asyncio
 import logging
 from supabase import create_client, Client
 from app.config import get_settings
 from app import cache as _cache
 
 logger = logging.getLogger(__name__)
+
+
+async def db_exec(query_fn):
+    """Run a synchronous Supabase query builder in a thread so it never blocks the event loop."""
+    return await asyncio.to_thread(query_fn)
+
+
+async def resolve_location_uuid_async(location_id: str) -> str:
+    """Async-safe wrapper around resolve_location_uuid — won't block the event loop."""
+    return await asyncio.to_thread(resolve_location_uuid, location_id)
 
 _client: Client = None
 
@@ -24,7 +35,7 @@ def get_supabase() -> Client:
 def check_connection() -> bool:
     try:
         client = get_supabase()
-        result = client.table("system_config").select("key").limit(1).execute()
+        client.table("system_config").select("key").limit(1).execute()
         return True
     except Exception as e:
         logger.error(f"Supabase connection check failed: {e}")
@@ -91,6 +102,7 @@ def get_location_uuid(external_id: str) -> str:
         client.table("locations")
         .select("id")
         .eq("external_id", external_id)
+        .limit(1)
         .execute()
     )
     if result.data:
@@ -112,6 +124,16 @@ def resolve_location_uuid(location_id: str) -> str:
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail=f"Location '{location_id}' not found")
     return uuid
+
+
+async def prime_location_cache() -> int:
+    """Bulk-load all location UUIDs into the cache at startup so every
+    resolve_location_uuid call is a dictionary hit rather than a DB round-trip."""
+    mapping = await asyncio.to_thread(get_all_location_uuids)
+    for ext_id, uuid in mapping.items():
+        _cache.set(f"loc_uuid:{ext_id}", uuid, ttl=_cache.FOREVER)
+    logger.info("Location UUID cache primed: %d entries", len(mapping))
+    return len(mapping)
 
 
 def get_all_location_uuids() -> dict:
