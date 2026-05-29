@@ -481,17 +481,27 @@ async def generate_predictions() -> dict:
 
 
 async def train_all_models() -> dict:
-    weather = await train_weather_models()
-    flood = await train_flood_models()
-    aq = await train_air_quality_models()
-    preds = await generate_predictions()
+    results: dict = {}
 
-    from app.database import set_system_config
-    set_system_config("last_model_training", datetime.utcnow().isoformat())
+    for step_name, step_fn in [
+        ("weather", train_weather_models),
+        ("flood", train_flood_models),
+        ("air_quality", train_air_quality_models),
+        ("predictions", generate_predictions),
+    ]:
+        try:
+            results[step_name] = await step_fn()
+        except Exception as e:
+            logger.error("train_all_models step '%s' failed: %s", step_name, e, exc_info=True)
+            results[step_name] = {"error": str(e)}
 
-    return {
-        "weather": weather,
-        "flood": flood,
-        "air_quality": aq,
-        "predictions": preds,
-    }
+    # Always record when training last attempted, even on partial failure
+    try:
+        from app.database import set_system_config
+        set_system_config("last_model_training", datetime.utcnow().isoformat())
+        from app.routers.system import _invalidate_status_cache
+        _invalidate_status_cache()
+    except Exception as e:
+        logger.error("Failed to update last_model_training: %s", e)
+
+    return results

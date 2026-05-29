@@ -73,6 +73,19 @@ async def get_system_status():
     tables = ["weather_data", "flood_data", "air_quality_data", "drought_data", "climate_data",
               "weather_predictions", "flood_predictions", "air_quality_predictions"]
 
+    # If system_config has no training date, read from the actual ml_models table
+    if not last_train:
+        try:
+            _r = client.table("ml_models") \
+                .select("created_at") \
+                .eq("status", "active") \
+                .order("created_at", desc=True) \
+                .limit(1).execute()
+            if _r.data:
+                last_train = _r.data[0].get("created_at")
+        except Exception:
+            pass
+
     def _count(table: str):
         try:
             r = client.table(table).select("id", count="exact").limit(0).execute()

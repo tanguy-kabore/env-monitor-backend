@@ -7,12 +7,33 @@ from app.config import get_app_config
 
 logger = logging.getLogger(__name__)
 
-scheduler = AsyncIOScheduler()
+scheduler = AsyncIOScheduler(
+    # If the server was sleeping and missed a fire time by up to 1 hour, run it
+    # immediately on wake-up instead of skipping. Critical for Render free tier.
+    job_defaults={"misfire_grace_time": 3600},
+)
 
 
 def _delay(minutes: int):
     """Return a UTC-aware datetime offset from now, used to stagger first runs."""
     return datetime.now(timezone.utc) + timedelta(minutes=minutes)
+
+
+def _training_startup_delay() -> int:
+    """Return startup delay (minutes) for the training job.
+    If training last ran over 20 hours ago (or never), run it sooner (10 min).
+    Otherwise use 120 min to avoid hammering on normal restarts."""
+    try:
+        from app.database import get_system_config
+        last = get_system_config("last_model_training")
+        if not last or last in ("never", "false", "null", ""):
+            return 10
+        from datetime import datetime, timezone
+        last_dt = datetime.fromisoformat(last.replace("Z", "+00:00"))
+        elapsed_h = (datetime.now(timezone.utc) - last_dt).total_seconds() / 3600
+        return 10 if elapsed_h >= 20 else 120
+    except Exception:
+        return 10
 
 
 def setup_scheduler():
@@ -80,14 +101,16 @@ def setup_scheduler():
     )
 
     retrain_hours = ml["training"]["retrain_frequency_hours"]
+    train_delay = _training_startup_delay()
     scheduler.add_job(
         _run_ml_in_thread(train_all_models),
         IntervalTrigger(hours=retrain_hours),
         id="retrain_models",
         name="Retrain ML models",
         replace_existing=True,
-        next_run_time=_delay(120),
+        next_run_time=_delay(train_delay),
     )
+    logger.info("retrain_models scheduled: first run in %d min", train_delay)
 
     scheduler.add_job(
         _run_ml_in_thread(generate_predictions),
@@ -148,6 +171,30 @@ def setup_scheduler():
         name="Proactive cache warmer",
         replace_existing=True,
         next_run_time=_delay(20),
+    )
+
+    # Keep-alive: ping own public URL every 10 min to prevent Render free-tier sleep.
+    # Set SELF_BASE_URL=https://your-app.onrender.com in Render environment variables.
+    import os as _os
+    _self_url = _os.getenv("SELF_BASE_URL", "").rstrip("/")
+
+    async def _keep_alive():
+        if not _self_url:
+            return
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=8) as _c:
+                await _c.get(f"{_self_url}/api/v1/system/health")
+        except Exception:
+            pass
+
+    scheduler.add_job(
+        _keep_alive,
+        IntervalTrigger(minutes=10),
+        id="keep_alive",
+        name="Keep-alive ping",
+        replace_existing=True,
+        next_run_time=_delay(2),
     )
 
     scheduler.start()
@@ -221,6 +268,7 @@ JOB_ICONS = {
     "generate_predictions":  "📈",
     "generate_alerts":       "🔔",
     "archive_daily_alerts":  "🗄️",
+    "keep_alive":            "💓",
 }
 
 JOB_DESC = {
@@ -233,6 +281,7 @@ JOB_DESC = {
     "generate_predictions":  "Génère les prévisions ML pour chaque ville",
     "generate_alerts":       "Analyse les données et crée/résout les alertes automatiquement",
     "archive_daily_alerts":  "Chaque soir à 23h59 : archive les alertes persistantes du jour",
+    "keep_alive":            "Ping toutes les 10 min pour maintenir le serveur actif (Render)",
 }
 
 
