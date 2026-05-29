@@ -66,7 +66,6 @@ async def get_system_status():
 
     initialized_val = get_system_config("app_initialized")
     initialized = initialized_val == "true"
-    last_hist = _cfg("last_historical_load")
     last_train = _cfg("last_model_training")
     jobs = get_scheduler_jobs()
 
@@ -81,14 +80,26 @@ async def get_system_status():
         except Exception:
             return table, 0
 
-    pairs = await asyncio.gather(*[
-        asyncio.to_thread(_count, t) for t in tables
-    ])
+    def _last_collection():
+        try:
+            r = client.table("collection_log") \
+                .select("created_at") \
+                .eq("status", "success") \
+                .order("created_at", desc=True) \
+                .limit(1).execute()
+            return r.data[0]["created_at"] if r.data else None
+        except Exception:
+            return None
+
+    pairs, last_coll = await asyncio.gather(
+        asyncio.gather(*[asyncio.to_thread(_count, t) for t in tables]),
+        asyncio.to_thread(_last_collection),
+    )
     counts = dict(pairs)
 
     result = {
         "initialized": initialized,
-        "last_historical_load": last_hist,
+        "last_historical_load": last_coll or _cfg("last_historical_load"),
         "last_model_training": last_train,
         "data_counts": counts,
         "scheduled_jobs": jobs,
