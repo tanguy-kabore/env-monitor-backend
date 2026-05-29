@@ -107,7 +107,7 @@ def get_location_uuid(external_id: str) -> str:
     )
     if result.data:
         uuid = result.data[0]["id"]
-        _cache.set(cache_key, uuid, ttl=_cache.FOREVER)
+        _cache.set(cache_key, uuid, ttl=3600)
         return uuid
     return None
 
@@ -131,7 +131,7 @@ async def prime_location_cache() -> int:
     resolve_location_uuid call is a dictionary hit rather than a DB round-trip."""
     mapping = await asyncio.to_thread(get_all_location_uuids)
     for ext_id, uuid in mapping.items():
-        _cache.set(f"loc_uuid:{ext_id}", uuid, ttl=_cache.FOREVER)
+        _cache.set(f"loc_uuid:{ext_id}", uuid, ttl=3600)
     logger.info("Location UUID cache primed: %d entries", len(mapping))
     return len(mapping)
 
@@ -163,6 +163,7 @@ def insert_batch(table: str, records: list) -> int:
     client = get_supabase()
     batch_size = 500
     total = 0
+    failed_batches = 0
     conflict_cols = UPSERT_CONFLICT_COLS.get(table)
     for i in range(0, len(records), batch_size):
         batch = records[i : i + batch_size]
@@ -173,7 +174,11 @@ def insert_batch(table: str, records: list) -> int:
                 result = client.table(table).insert(batch).execute()
             total += len(result.data) if result.data else 0
         except Exception as e:
-            logger.error(f"Batch insert error on {table}: {e}")
+            failed_batches += 1
+            logger.error(f"Batch insert error on {table} (batch {i // batch_size + 1}): {e}")
+    if failed_batches:
+        logger.warning("insert_batch(%s): %d batch(es) failed — %d records inserted out of %d attempted",
+                       table, failed_batches, total, len(records))
     return total
 
 

@@ -89,22 +89,22 @@ async def collect_historical_weather() -> dict:
     start = time.time()
 
     # Find which locations already have archive data — skip them entirely
-    # Use count query per uuid: fast (45 light queries vs 55000-row fetch)
     client = get_supabase()
     already_loaded = set()
     try:
         all_uuids = list(uuid_map.values())
-        for uuid_val in all_uuids:
-            res = (
-                client.table("weather_data")
+
+        async def _check_one(uuid_val: str):
+            res = await asyncio.to_thread(lambda: client.table("weather_data")
                 .select("location_id", count="exact")
                 .eq("source", "open_meteo_archive")
                 .eq("location_id", uuid_val)
                 .limit(1)
-                .execute()
-            )
-            if (res.count or 0) > 0:
-                already_loaded.add(uuid_val)
+                .execute())
+            return uuid_val if (res.count or 0) > 0 else None
+
+        results = await asyncio.gather(*[_check_one(u) for u in all_uuids], return_exceptions=True)
+        already_loaded = {u for u in results if isinstance(u, str)}
         logger.info(f"Historical check: {len(already_loaded)}/{len(all_uuids)} cities already loaded")
     except Exception as e:
         logger.warning(f"Could not check existing historical data: {e}")
