@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, JSONResponse
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -124,6 +124,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Global exception handler — ensures ALL 500 errors go through CORSMiddleware
+# (unhandled exceptions would otherwise bypass CORS and return headers-less 500s)
+@app.exception_handler(Exception)
+async def _global_exception_handler(request: Request, exc: Exception):
+    logger.error("Unhandled exception %s %s: %s", request.method, request.url.path, exc, exc_info=True)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
 
 # ── Routers (v1) ─────────────────────────────────────────────────────────────
 app.include_router(system.router)

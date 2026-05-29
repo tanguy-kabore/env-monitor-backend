@@ -49,11 +49,19 @@ async def get_config():
 
 @router.get("/status")
 async def get_system_status():
+    import asyncio
+    from app import cache as _cache
+
+    # Serve from cache (60s) so cold-start Supabase latency never hits the client
+    cache_key = "system:status"
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     def _cfg(key):
         val = get_system_config(key)
         if not val or val in ("never", "false", "null", ""):
             return None
-        # strip JSON double-quotes from legacy stored values
         return val.strip('"')
 
     initialized_val = get_system_config("app_initialized")
@@ -62,7 +70,6 @@ async def get_system_status():
     last_train = _cfg("last_model_training")
     jobs = get_scheduler_jobs()
 
-    import asyncio
     client = get_supabase()
     tables = ["weather_data", "flood_data", "air_quality_data", "drought_data", "climate_data",
               "weather_predictions", "flood_predictions", "air_quality_predictions"]
@@ -74,17 +81,25 @@ async def get_system_status():
         except Exception:
             return table, 0
 
-    loop = asyncio.get_event_loop()
-    pairs = await asyncio.gather(*[loop.run_in_executor(None, _count, t) for t in tables])
+    pairs = await asyncio.gather(*[
+        asyncio.to_thread(_count, t) for t in tables
+    ])
     counts = dict(pairs)
 
-    return {
+    result = {
         "initialized": initialized,
         "last_historical_load": last_hist,
         "last_model_training": last_train,
         "data_counts": counts,
         "scheduled_jobs": jobs,
     }
+    _cache.set(cache_key, result, ttl=60)
+    return result
+
+
+def _invalidate_status_cache():
+    from app import cache as _cache
+    _cache.delete("system:status")
 
 
 @router.post("/reset-status")
@@ -107,6 +122,7 @@ async def reset_system_status():
             r2 = client.table("ml_models").select("trained_at").order("trained_at", desc=True).limit(1).execute()
             if r2.data:
                 set_system_config("last_model_training", r2.data[0]["trained_at"])
+    _invalidate_status_cache()
     return {"initialized": has_data, "message": "Status updated from actual DB counts"}
 
 
@@ -116,6 +132,7 @@ async def initialize_system(background_tasks: BackgroundTasks):
     if initialized == "true":
         return {"message": "System already initialized", "status": "skipped"}
 
+    _invalidate_status_cache()
     background_tasks.add_task(_run_initialization)
     return {"message": "Initialization started in background", "status": "started"}
 
@@ -160,6 +177,28 @@ async def trigger_all_collection(background_tasks: BackgroundTasks):
 async def trigger_training(background_tasks: BackgroundTasks):
     background_tasks.add_task(_run_async, train_all_models)
     return {"message": "Model training triggered"}
+
+
+@router.post("/full-cycle")
+async def trigger_full_cycle(background_tasks: BackgroundTasks):
+    """Collect all → train models → generate alerts (sequential background task)."""
+    async def _full_cycle():
+        import logging as _log
+        _logger = _log.getLogger(__name__)
+        try:
+            from app.routers.alerts import generate_alerts as _generate_alerts
+            _logger.info("Full cycle [1/3]: collecting data...")
+            await _run_all_collection()
+            _logger.info("Full cycle [2/3]: training models...")
+            await train_all_models()
+            _logger.info("Full cycle [3/3]: generating alerts...")
+            await _generate_alerts()
+            _logger.info("Full cycle: complete")
+        except Exception as e:
+            _log.getLogger(__name__).error("Full cycle failed: %s", e, exc_info=True)
+
+    background_tasks.add_task(_full_cycle)
+    return {"message": "Cycle complet démarré (collecte → entraînement → alertes)"}
 
 
 @router.get("/collection-log")

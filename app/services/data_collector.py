@@ -1,13 +1,12 @@
 import asyncio
 import logging
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from app.config import get_app_config
 from app.database import (
     get_supabase,
     get_all_location_uuids,
     insert_batch,
-    get_system_config,
     set_system_config,
     upsert_locations,
 )
@@ -84,7 +83,7 @@ async def collect_historical_weather() -> dict:
     locs = config.get_monitorable_locations()
     uuid_map = get_all_location_uuids()
     start_date = config.data_collection.get("historical_start_date", "2023-01-01")
-    end_date = (datetime.utcnow() - timedelta(days=5)).strftime("%Y-%m-%d")
+    end_date = (datetime.now(timezone.utc) - timedelta(days=5)).strftime("%Y-%m-%d")
     records = []
     errors = []
     start = time.time()
@@ -245,7 +244,7 @@ async def collect_climate_data() -> dict:
     records = []
     errors = []
     start = time.time()
-    current_year = datetime.utcnow().year
+    current_year = datetime.now(timezone.utc).year
 
     for loc in locs:
         try:
@@ -310,7 +309,7 @@ async def compute_drought_indicators() -> dict:
     client = get_supabase()
     thresholds = config.alert_thresholds.get("drought", {})
     records = []
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     # Check which location+date combos already exist to avoid re-inserting
     try:
@@ -431,7 +430,6 @@ def _classify_drought(spi, thresholds):
 
 def _log_collection(source, data_type, locs_processed, records_inserted, errors, duration):
     try:
-        from app.database import get_supabase
         client = get_supabase()
         status = "success" if not errors else ("partial" if records_inserted > 0 else "failed")
         client.table("collection_log").insert({
@@ -443,5 +441,10 @@ def _log_collection(source, data_type, locs_processed, records_inserted, errors,
             "error_message": str(errors[:5]) if errors else None,
             "duration_seconds": round(duration, 2),
         }).execute()
+        # Keep last_historical_load in sync and invalidate status cache
+        if status in ("success", "partial"):
+            set_system_config("last_historical_load", datetime.now(timezone.utc).isoformat())
+            from app import cache as _cache
+            _cache.delete("system:status")
     except Exception as e:
         logger.error(f"Failed to log collection: {e}")
