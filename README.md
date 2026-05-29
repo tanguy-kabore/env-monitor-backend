@@ -1,4 +1,4 @@
-# EcoWatch Burkina — Backend
+# Secheinon Burkina — Backend
 
 > **Version 1.0.0-alpha** · Build 20260513-001
 

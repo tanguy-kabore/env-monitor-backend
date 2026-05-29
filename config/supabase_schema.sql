@@ -1,4 +1,4 @@
--- EcoWatch Environmental Monitoring System - Database Schema
+-- Secheinon Environmental Monitoring System - Database Schema
 -- Compliant with ISO 19115 (Geographic Information - Metadata)
 -- and WMO standards for environmental data
 

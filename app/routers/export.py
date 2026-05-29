@@ -125,7 +125,7 @@ DATASETS = {
     "alerts": {
         "label": "Alertes environnementales",
         "description": "Alertes générées automatiquement par le système lorsque des seuils sont dépassés (débit, AQI, température, SPI).",
-        "source": "Calcul interne EcoWatch",
+        "source": "Calcul interne Secheinon",
         "standard": "CAP – Common Alerting Protocol (ITU-T X.1303)",
         "table": "alerts",
         "time_col": "start_date",

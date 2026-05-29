@@ -63,7 +63,7 @@ class AppConfig:
 
     @property
     def app_name(self) -> str:
-        return self.get("app.name", "EcoWatch")
+        return self.get("app.name", "Secheinon")
 
     @property
     def app_version(self) -> str:
