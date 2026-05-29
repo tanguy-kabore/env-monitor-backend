@@ -125,12 +125,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global exception handler — ensures ALL 500 errors go through CORSMiddleware
-# (unhandled exceptions would otherwise bypass CORS and return headers-less 500s)
+# Global exception handler — catches ALL unhandled errors.
+# IMPORTANT: @app.exception_handler(Exception) is passed to ServerErrorMiddleware,
+# which sends the response via the raw ASGI send (bypassing CORSMiddleware). We
+# therefore add CORS headers manually here so cross-origin clients always get them.
 @app.exception_handler(Exception)
 async def _global_exception_handler(request: Request, exc: Exception):
     logger.error("Unhandled exception %s %s: %s", request.method, request.url.path, exc, exc_info=True)
-    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+    origin = request.headers.get("origin", "")
+    cors_headers = {}
+    if origin:
+        cors_headers["Access-Control-Allow-Origin"] = origin
+        cors_headers["Access-Control-Allow-Credentials"] = "true"
+        cors_headers["Access-Control-Allow-Methods"] = "*"
+        cors_headers["Access-Control-Allow-Headers"] = "*"
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+        headers=cors_headers if cors_headers else None,
+    )
 
 
 # ── Routers (v1) ─────────────────────────────────────────────────────────────

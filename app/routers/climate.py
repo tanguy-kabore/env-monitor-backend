@@ -165,14 +165,34 @@ async def get_climate_trends(
 
     # Offload CPU-bound pandas aggregation to a thread so the event loop stays free
     def _compute(rows, sy, cy):
+        import math
+
+        def _sf(v):
+            """Convert NaN/inf float to None — Starlette's JSONResponse uses
+            allow_nan=False and would raise ValueError on bare NaN floats."""
+            if v is None:
+                return None
+            try:
+                f = float(v)
+                return None if (math.isnan(f) or math.isinf(f)) else f
+            except (TypeError, ValueError):
+                return None
+
         df = pd.DataFrame(rows)
-        df["observed_at"] = pd.to_datetime(df["observed_at"])
-        df["year"] = df["observed_at"].dt.year
-        df["month"] = df["observed_at"].dt.month
+        df["observed_at"] = pd.to_datetime(df["observed_at"], errors="coerce")
+        df = df.dropna(subset=["observed_at"])
+        df["year"] = df["observed_at"].dt.year.astype(int)
+        df["month"] = df["observed_at"].dt.month.astype(int)
         df = df[df["year"] >= sy].copy()
         df["_temp"] = pd.to_numeric(df["_temp"], errors="coerce")
-        df["precipitation"] = pd.to_numeric(df.get("precipitation"), errors="coerce")
-        df["humidity"] = pd.to_numeric(df.get("humidity"), errors="coerce")
+        if "precipitation" in df.columns:
+            df["precipitation"] = pd.to_numeric(df["precipitation"], errors="coerce")
+        else:
+            df["precipitation"] = np.nan
+        if "humidity" in df.columns:
+            df["humidity"] = pd.to_numeric(df["humidity"], errors="coerce")
+        else:
+            df["humidity"] = np.nan
 
         monthly_df = df.groupby(["year", "month"]).agg(
             avg_temperature=("_temp", "mean"),
@@ -180,7 +200,12 @@ async def get_climate_trends(
             avg_humidity=("humidity", "mean"),
         ).reset_index()
         monthly_df["solar_radiation"] = None
-        monthly = monthly_df.to_dict("records")
+
+        # Replace NaN with None in records so json.dumps doesn't choke
+        monthly = [
+            {k: (_sf(v) if isinstance(v, float) else v) for k, v in rec.items()}
+            for rec in monthly_df.to_dict("records")
+        ]
 
         yearly_df = df.groupby("year").agg(
             avg_temperature=("_temp", "mean"),
@@ -189,15 +214,20 @@ async def get_climate_trends(
             temp_max=("_temp", "max"),
             temp_min=("_temp", "min"),
         ).reset_index()
-        yearly = yearly_df.to_dict("records")
 
-        all_mean_temp = float(yearly_df["avg_temperature"].mean()) if len(yearly_df) > 1 else None
-        for row in yearly:
-            row["partial"] = (row["year"] == cy)
-            if all_mean_temp is not None:
-                row["temp_anomaly"] = round(float(row["avg_temperature"]) - all_mean_temp, 3)
+        mean_series = yearly_df["avg_temperature"].dropna()
+        all_mean_temp = _sf(mean_series.mean()) if len(mean_series) > 1 else None
+
+        yearly = []
+        for rec in yearly_df.to_dict("records"):
+            cleaned = {k: (_sf(v) if isinstance(v, float) else v) for k, v in rec.items()}
+            cleaned["partial"] = (cleaned["year"] == cy)
+            avg_t = cleaned.get("avg_temperature")
+            if all_mean_temp is not None and avg_t is not None:
+                cleaned["temp_anomaly"] = _sf(round(avg_t - all_mean_temp, 3))
             else:
-                row["temp_anomaly"] = None
+                cleaned["temp_anomaly"] = None
+            yearly.append(cleaned)
 
         monthly_df["season"] = monthly_df["month"].apply(
             lambda m: "humide" if 5 <= m <= 10 else "sèche"
@@ -206,19 +236,24 @@ async def get_climate_trends(
             avg_temperature=("avg_temperature", "mean"),
             total_precipitation=("total_precipitation", "sum"),
         ).reset_index()
-        seasonal = seasonal_df.to_dict("records")
+        seasonal = [
+            {k: (_sf(v) if isinstance(v, float) else v) for k, v in rec.items()}
+            for rec in seasonal_df.to_dict("records")
+        ]
 
         extremes = []
         month_names_fr = ["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Août","Septembre","Octobre","Novembre","Décembre"]
         for yr, grp in monthly_df.groupby("year"):
             hottest = grp.loc[grp["avg_temperature"].idxmax()] if grp["avg_temperature"].notna().any() else None
             wettest = grp.loc[grp["total_precipitation"].idxmax()] if grp["total_precipitation"].notna().any() else None
+            h_temp = _sf(hottest["avg_temperature"]) if hottest is not None else None
+            w_precip = _sf(wettest["total_precipitation"]) if wettest is not None else None
             extremes.append({
                 "year": int(yr),
                 "hottest_month": month_names_fr[int(hottest["month"]) - 1] if hottest is not None else None,
-                "hottest_temp": round(float(hottest["avg_temperature"]), 1) if hottest is not None else None,
+                "hottest_temp": round(h_temp, 1) if h_temp is not None else None,
                 "wettest_month": month_names_fr[int(wettest["month"]) - 1] if wettest is not None else None,
-                "wettest_precip": round(float(wettest["total_precipitation"]), 1) if wettest is not None else None,
+                "wettest_precip": round(w_precip, 1) if w_precip is not None else None,
             })
 
         trend_slope = None
@@ -229,8 +264,9 @@ async def get_climate_trends(
             mask = ~np.isnan(y_vals)
             if mask.sum() >= 3:
                 slope, _ = np.polyfit(x[mask], y_vals[mask], 1)
-                trend_slope = round(float(slope), 4)
+                trend_slope = _sf(slope)
 
+        earliest = int(df["year"].min()) if not df.empty else sy
         return {
             "monthly": monthly,
             "yearly_trends": yearly,
@@ -238,7 +274,7 @@ async def get_climate_trends(
             "extremes": extremes,
             "trend_slope": trend_slope,
             "long_mean_temp": all_mean_temp,
-            "earliest_year": int(df["year"].min()) if not df.empty else sy,
+            "earliest_year": earliest,
         }
 
     computed = await asyncio.to_thread(_compute, combined, start_year, current_year)

@@ -245,34 +245,53 @@ async def generate_alerts():
         .eq("is_active", True)
         .execute())
     locs = locs_res.data or []
+    if not locs:
+        return {"created": 0, "resolved": 0, "active_total": 0}
     loc_ids = [l["id"] for l in locs]
 
-    # Fetch all latest sensor data and active alerts in parallel
-    flood_res, aq_res, wx_res, active_alerts_res = await asyncio.gather(
+    # Fetch all latest sensor data and active alerts in parallel.
+    # return_exceptions=True prevents one failing query from aborting the others.
+    limit = max(len(loc_ids) * 3, 1)
+    results = await asyncio.gather(
         db_exec(lambda: client.table("flood_data")
             .select("location_id, river_discharge, flood_risk_level, observed_at")
             .in_("location_id", loc_ids)
             .order("observed_at", desc=True)
-            .limit(len(loc_ids) * 3)
+            .limit(limit)
             .execute()),
         db_exec(lambda: client.table("air_quality_data")
             .select("location_id, aqi, observed_at")
             .in_("location_id", loc_ids)
             .order("observed_at", desc=True)
-            .limit(len(loc_ids) * 3)
+            .limit(limit)
             .execute()),
         db_exec(lambda: client.table("weather_data")
             .select("location_id, temperature, temperature_max, observed_at")
             .in_("location_id", loc_ids)
             .order("observed_at", desc=True)
-            .limit(len(loc_ids) * 3)
+            .limit(limit)
             .execute()),
         db_exec(lambda: client.table("alerts")
             .select("id, location_id, alert_type, severity, metadata")
             .eq("is_active", True)
             .limit(2000)
             .execute()),
+        return_exceptions=True,
     )
+    flood_res, aq_res, wx_res, active_alerts_res = results
+    if isinstance(flood_res, Exception):
+        logger.error("generate_alerts: flood query failed: %s", flood_res)
+        flood_res = type("R", (), {"data": []})()
+    if isinstance(aq_res, Exception):
+        logger.error("generate_alerts: air_quality query failed: %s", aq_res)
+        aq_res = type("R", (), {"data": []})()
+    if isinstance(wx_res, Exception):
+        logger.error("generate_alerts: weather query failed: %s", wx_res)
+        wx_res = type("R", (), {"data": []})()
+    if isinstance(active_alerts_res, Exception):
+        logger.error("generate_alerts: active_alerts query failed: %s", active_alerts_res)
+        active_alerts_res = type("R", (), {"data": []})()
+
 
     latest_flood: dict = {}
     for r in (flood_res.data or []):
@@ -410,7 +429,10 @@ async def generate_alerts():
         }).in_("id", ids_to_resolve).execute()))
 
     if write_tasks:
-        await asyncio.gather(*write_tasks)
+        write_results = await asyncio.gather(*write_tasks, return_exceptions=True)
+        for wr in write_results:
+            if isinstance(wr, Exception):
+                logger.error("generate_alerts: write task failed: %s", wr)
 
     logger.info(f"Alert generation: {created} created, {resolved} resolved")
     return {
