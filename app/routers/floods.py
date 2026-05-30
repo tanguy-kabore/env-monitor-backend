@@ -164,8 +164,8 @@ async def get_flood_predictions(location_id: str):
 
     from datetime import datetime, timedelta
     now = datetime.utcnow()
-    past_limit = (now - timedelta(days=7)).isoformat()
-    future_limit = (now + timedelta(days=30)).isoformat()
+    past_limit = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+    future_limit = (now + timedelta(days=30)).strftime("%Y-%m-%d")
 
     result = await db_exec(lambda: client.table("flood_predictions")
         .select("id,location_id,target_date,predicted_at,river_discharge,flood_probability,risk_level,model_version")
@@ -174,7 +174,7 @@ async def get_flood_predictions(location_id: str):
         .lte("target_date", future_limit)
         .order("target_date", desc=False)
         .order("predicted_at", desc=True)
-        .limit(200)
+        .limit(300)
         .execute())
 
     by_day: dict = {}
@@ -185,7 +185,7 @@ async def get_flood_predictions(location_id: str):
 
     deduped = sorted(by_day.values(), key=lambda r: r["target_date"])
     response = {"data": deduped, "count": len(deduped)}
-    _cache.set(cache_key, response, ttl=3600)
+    _cache.set(cache_key, response, ttl=1_800)
     return response
 
 
@@ -216,10 +216,11 @@ async def get_flood_risk_map():
         if lid not in latest_by_loc:
             latest_by_loc[lid] = row
 
+    from datetime import datetime
     risk_data = [
         {"location": loc, "latest_flood": latest_by_loc.get(loc["id"])}
         for loc in locations.data
     ]
-    response = {"data": risk_data}
-    _cache.set(cache_key, response, ttl=1_800)
+    response = {"data": risk_data, "updated_at": datetime.utcnow().isoformat()}
+    _cache.set(cache_key, response, ttl=600)
     return response

@@ -11,6 +11,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.preprocessing import StandardScaler
 from app.config import get_app_config
 from app.database import get_supabase, get_all_location_uuids, insert_batch
+from app.services import open_meteo
 
 logger = logging.getLogger(__name__)
 
@@ -343,6 +344,16 @@ async def generate_predictions() -> dict:
     aq_preds = []
     now = datetime.utcnow()
 
+    # Build lat/lon lookup for GloFAS fallback (when ML model cache is empty after restart)
+    loc_coords: dict = {}
+    try:
+        loc_coords = {
+            loc["external_id"]: (loc["latitude"], loc["longitude"])
+            for loc in config.get_monitorable_locations()
+        }
+    except Exception as _e:
+        logger.warning("generate_predictions: could not build loc_coords: %s", _e)
+
     for ext_id, loc_uuid in uuid_map.items():
         for target in ["temperature_max", "temperature_min", "precipitation"]:
             model_key = f"weather_{target}_{ext_id}"
@@ -406,6 +417,40 @@ async def generate_predictions() -> dict:
                     "risk_level": risk,
                     "model_version": f"v{now.strftime('%Y%m%d%H%M')}",
                 })
+        elif ext_id in loc_coords:
+            # GloFAS fallback: use Open-Meteo hydrological forecast when ML cache is empty
+            try:
+                lat, lon = loc_coords[ext_id]
+                glofas = await open_meteo.fetch_flood_data(lat, lon)
+                daily = glofas.get("daily", {})
+                times = daily.get("time", [])
+                discharges = daily.get("river_discharge", [])
+                flood_t = config.alert_thresholds.get("flood", {})
+                high_t = flood_t.get("high") or 1
+                for t, q in zip(times, discharges):
+                    if q is None:
+                        continue
+                    q_f = float(q)
+                    if q_f >= (flood_t.get("extreme") or 9999):
+                        risk = "extreme"
+                    elif q_f >= (flood_t.get("high") or 9999):
+                        risk = "high"
+                    elif q_f >= (flood_t.get("moderate") or 9999):
+                        risk = "moderate"
+                    else:
+                        risk = "low"
+                    flood_preds.append({
+                        "location_id": loc_uuid,
+                        "predicted_at": now.isoformat(),
+                        "target_date": t,
+                        "river_discharge": round(q_f, 3),
+                        "flood_probability": min(1.0, max(0.0, q_f / high_t)),
+                        "risk_level": risk,
+                        "model_version": "glofas_v4",
+                    })
+                logger.info("GloFAS fallback generated %d flood predictions for %s", len(times), ext_id)
+            except Exception as _e:
+                logger.warning("GloFAS fallback failed for %s: %s", ext_id, _e)
 
         # Check if any AQ model in cache for this location
         has_aq_model = any(f"aq_{t}_{ext_id}" in MODEL_CACHE for t in ["pm10", "pm2_5", "aqi"])
